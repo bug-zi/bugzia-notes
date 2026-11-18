@@ -1,0 +1,253 @@
+/* 便签卡片视觉：bugzia NoteWindow.css 的移植。颜色/圆角/字号经 CSS 变量
+   注水（--note-*，由 note.js 依 NoteSettings 设置）。 */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  height: 100%;
+  overflow: hidden;
+}
+
+.note-root {
+  box-sizing: border-box;
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--note-bg, rgba(201, 88, 119, 0.9));
+  color: #fff;
+  border-radius: var(--note-radius, 10px);
+  font-size: var(--note-font, 14px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  user-select: none;
+  overflow: hidden;
+}
+
+/* 头部：拖动区（wails 无边框拖动）+ 右上角三按钮 */
+.note-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  cursor: grab;
+  background: rgba(0, 0, 0, 0.16);
+  --wails-draggable: drag;
+}
+
+.note-header:active {
+  cursor: grabbing;
+}
+
+.note-grip {
+  width: 28px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.note-actions {
+  display: flex;
+  gap: 6px;
+  /* 按钮不参与拖动，否则点击被拖动区吞掉 */
+  --wails-draggable: no-drag;
+}
+
+.note-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.12);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.note-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.note-btn.pin.active {
+  background: rgba(255, 255, 255, 0.85);
+  color: #9e1b32;
+  border-color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+}
+
+.note-btn.destroy:hover {
+  background: rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.55);
+}
+
+.note-body {
+  flex: 1 1 auto;
+  padding: 10px 12px;
+  overflow: auto;
+  overflow-anchor: none;
+  cursor: text;
+  --wails-draggable: no-drag;
+}
+
+.note-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  min-height: 100%;
+}
+
+.note-text:empty::before {
+  content: "点击编辑…";
+  opacity: 0.75;
+}
+
+.note-textarea {
+  /* 块级化：textarea 默认 inline 布局，基线下方的 descender 空隙会让它比
+     .note-text 高几像素，切换态时内容高度不一致引发显示跳动 */
+  display: block;
+  width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  /* 清掉 UA 默认 padding（2px）：与 .note-text 度量完全对齐（内容高、
+     换行宽度一致），否则阅读态/编辑态切换时内容高度变化会引发显示跳动 */
+  padding: 0;
+  resize: none;
+  border: none;
+  outline: none;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* display:block 会覆盖 hidden 属性的 UA display:none（同 .note-confirm 的
+   教训），必须显式压回，否则编辑框常驻占位 */
+.note-textarea[hidden] {
+  display: none;
+}
+
+/* 销毁确认浮层（hidden 属性控制显隐——必须显式声明，否则下面的
+   display:flex 会覆盖 hidden 的默认 display:none，浮层将常驻显示） */
+.note-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.28);
+  outline: none;
+}
+
+.note-confirm[hidden] {
+  display: none;
+}
+
+.note-confirm-panel {
+  min-width: 180px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.46);
+  text-align: center;
+}
+
+.note-confirm-title {
+  font-size: 14px;
+  line-height: 1.4;
+  margin-bottom: 12px;
+}
+
+.note-confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.note-confirm-btn {
+  appearance: none;
+  min-width: 46px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.note-confirm-btn:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.note-confirm-btn.yes:hover {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+/* 样式面板浮层：复用销毁确认的覆盖层模式；面板内部滚动，不改窗口尺寸。
+   与销毁确认互斥由 note.js 保证（z-index 同层不叠加）。 */
+.note-stylepanel {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: stretch;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.note-stylepanel[hidden] {
+  display: none;
+}
+
+.note-stylepanel-card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(30, 30, 36, 0.92);
+  overflow: hidden;
+}
+
+.note-stylepanel-head {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.note-stylepanel-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.note-btn.lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.note-btn.lock svg {
+  display: block;
+}
+
+.note-btn.lock.active {
+  background: rgba(255, 255, 255, 0.85);
+  color: #9e1b32;
+  border-color: rgba(255, 255, 255, 0.9);
+}

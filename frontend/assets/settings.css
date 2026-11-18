@@ -1,0 +1,96 @@
+/* 设置窗口：深色实底、玫红点缀（与便签同源配色），无高饱和撞色。
+   表单行/输入框/色板/提示等公共表单样式在 styleform.css（与便签面板共用）。 */
+
+html, body {
+  margin: 0;
+  background: #1e1e24;
+  color: #e8e6ea;
+  font: 13px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+.panel {
+  padding: 18px 22px;
+  max-width: 560px;
+}
+
+h2 {
+  font-size: 14px;
+  color: #d98ba1;
+  border-bottom: 1px solid #33323a;
+  padding-bottom: 6px;
+  margin: 22px 0 10px;
+}
+
+button {
+  background: #7d3d51;
+  border: 1px solid #96536a;
+  color: #f2e9ec;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+button:hover { background: #8d4560; }
+
+.hint {
+  color: #8a8894;
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
+.version {
+  margin-top: 26px;
+  color: #6f6d78;
+  font-size: 12px;
+}
+
+/* 开机自启动开关：原生 checkbox 隐藏，switch-ui 绘制轨道（玫红同源色） */
+.switch-row { cursor: pointer; }
+
+.switch-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.switch-ui {
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  background: #3a3942;
+  border: 1px solid #4a4952;
+  position: relative;
+  transition: background 0.15s, border-color 0.15s;
+  flex: none;
+}
+
+.switch-ui::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #b9b6bf;
+  transition: left 0.15s, background 0.15s;
+}
+
+.switch-input:checked + .switch-ui {
+  background: #7d3d51;
+  border-color: #96536a;
+}
+
+.switch-input:checked + .switch-ui::after {
+  left: 18px;
+  background: #f2e9ec;
+}
+
+.switch-input:disabled + .switch-ui { opacity: 0.4; }
+
+.switch-input:focus-visible + .switch-ui { outline: 1px solid #96536a; }

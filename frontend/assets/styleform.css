@@ -1,0 +1,43 @@
+/* 便签样式表单公共样式：设置窗口「样式默认」区与便签内样式面板共用。
+   深色底、玫红同源点缀（与整体同色系，禁高饱和撞色）。 */
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #b9b6bf;
+}
+
+.row input {
+  width: 56px;
+  background: #2a2930;
+  border: 1px solid #3a3942;
+  border-radius: 6px;
+  color: #e8e6ea;
+  padding: 5px 8px;
+  font: inherit;
+}
+
+.row input[type="text"] { width: 130px; }
+
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.swatch {
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  padding: 0;
+}
+
+.msg { color: #d98ba1; }

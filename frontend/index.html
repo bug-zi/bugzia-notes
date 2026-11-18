@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>bugzia-notes 设置</title>
+<link rel="stylesheet" href="/assets/styleform.css">
+<link rel="stylesheet" href="/assets/settings.css">
+</head>
+<body>
+<div class="panel">
+  <h2>样式默认（改动实时生效）</h2>
+  <div class="row">
+    <span class="swatches" id="swatches"></span>
+    <span id="style-msg" class="msg"></span>
+  </div>
+  <div class="row">
+    <label>背景 RGB <input id="bg-r" type="number" min="0" max="255"> <input id="bg-g" type="number" min="0" max="255"> <input id="bg-b" type="number" min="0" max="255"></label>
+    <label>背景不透明度 <input id="bg-a" type="number" step="0.05" min="0.05" max="1"></label>
+  </div>
+  <div class="row">
+    <label>圆角 <input id="radius" type="number" min="0" max="64"></label>
+    <label>字号 <input id="font" type="number" min="6" max="64"></label>
+    <label>默认宽 <input id="w" type="number" min="160" max="4096"></label>
+    <label>默认高 <input id="h" type="number" min="120" max="4096"></label>
+  </div>
+
+  <h2>全局快捷键（留空 = 禁用）</h2>
+  <div class="row">
+    <label>集合切换 <input id="hk-toggle" placeholder="alt+n"></label>
+    <label>直接新建 <input id="hk-create" placeholder="alt+shift+c"></label>
+    <label>销毁当前 <input id="hk-destroy" placeholder="alt+z"></label>
+  </div>
+  <div class="row">
+    <button id="apply-hotkeys">应用快捷键</button>
+    <span id="hk-msg" class="msg"></span>
+  </div>
+  <p class="hint">
+    集合切换：没有便签时新建一张，有便签时在「全部显示 / 全部隐藏」之间切换（默认迁移自
+    bugzia 的 alt+c，即你说的显示/隐藏便签键）。直接新建：无论何时都新建一张钉住的空白便签。
+    销毁当前：销毁最近新建或编辑的那张，带确认。
+  </p>
+
+  <h2>通用</h2>
+  <div class="row">
+    <label class="switch-row">开机自启动
+      <input type="checkbox" id="autostart-switch" class="switch-input">
+      <span class="switch-ui"></span>
+    </label>
+    <span id="autostart-msg" class="msg"></span>
+  </div>
+  <p class="hint">开启后随系统静默启动：仅托盘驻留，按集合切换键召唤便签。</p>
+
+  <p class="version" id="version"></p>
+</div>
+<script type="module" src="/assets/settings.js"></script>
+</body>
+</html>
