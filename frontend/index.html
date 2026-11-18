@@ -8,7 +8,7 @@
 </head>
 <body>
 <div class="panel">
-  <h2>样式默认（改动实时生效）</h2>
+  <h2>样式默认（主便签背景色 + 全体便签圆角/字号/透明度）</h2>
   <div class="row">
     <span class="swatches" id="swatches"></span>
     <span id="style-msg" class="msg"></span>
@@ -27,18 +27,39 @@
   <h2>全局快捷键（留空 = 禁用）</h2>
   <div class="row">
     <label>集合切换 <input id="hk-toggle" placeholder="alt+n"></label>
-    <label>直接新建 <input id="hk-create" placeholder="alt+shift+c"></label>
+    <label>主便签 <input id="hk-main" placeholder="alt+c"></label>
     <label>销毁当前 <input id="hk-destroy" placeholder="alt+z"></label>
+  </div>
+  <div class="row">
+    <label>辅助 1 <input id="hk-aux1" placeholder="alt+1"></label>
+    <label>辅助 2 <input id="hk-aux2" placeholder="alt+2"></label>
+    <label>辅助 3 <input id="hk-aux3" placeholder="alt+3"></label>
+  </div>
+  <div class="row">
+    <label>辅助 4 <input id="hk-aux4" placeholder="alt+4"></label>
+    <label>辅助 5 <input id="hk-aux5" placeholder="alt+5"></label>
   </div>
   <div class="row">
     <button id="apply-hotkeys">应用快捷键</button>
     <span id="hk-msg" class="msg"></span>
   </div>
   <p class="hint">
-    集合切换：没有便签时新建一张，有便签时在「全部显示 / 全部隐藏」之间切换（默认迁移自
-    bugzia 的 alt+c，即你说的显示/隐藏便签键）。直接新建：无论何时都新建一张钉住的空白便签。
+    集合切换：全部便签在「全部显示 / 全部隐藏」之间切换。主便签：常用便签的召唤/隐藏键
+    （首次按下自动创建）。辅助便签 1~5：需要多便签时逐个召唤，各一色，互不相干。
     销毁当前：销毁最近新建或编辑的那张，带确认。
   </p>
+
+  <h2>辅助便签颜色（改动实时生效）</h2>
+  <div class="row">
+    <label>辅助 1 <input id="aux-color-1" type="color"></label>
+    <label>辅助 2 <input id="aux-color-2" type="color"></label>
+    <label>辅助 3 <input id="aux-color-3" type="color"></label>
+  </div>
+  <div class="row">
+    <label>辅助 4 <input id="aux-color-4" type="color"></label>
+    <label>辅助 5 <input id="aux-color-5" type="color"></label>
+    <span id="aux-color-msg" class="msg"></span>
+  </div>
 
   <h2>通用</h2>
   <div class="row">

@@ -6,48 +6,63 @@ import (
 	"testing"
 )
 
-func newTestConfig(ts *httptest.Server) *Config {
-	return &Config{RepoAPI: ts.URL + "/releases/latest", AssetName: "bugzia-notes.exe",
-		Client: ts.Client()}
+const atomFixture = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="en-US">
+  <id>tag:github.com,2008:https://github.com/bug-zi/bugzia-notes/releases</id>
+  <link type="text/html" rel="alternate" href="https://github.com/bug-zi/bugzia-notes/releases"/>
+  <title>Release notes from bugzia-notes</title>
+  <entry>
+    <id>tag:github.com,2008:https://github.com/bug-zi/bugzia-notes/releases/409909871</id>
+    <updated>2026-11-18T06:59:27Z</updated>
+    <link type="text/html" rel="alternate" href="https://github.com/bug-zi/bugzia-notes/releases/tag/v2.0.0"/>
+    <title>v2.0.0</title>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:https://github.com/bug-zi/bugzia-notes/releases/400000000</id>
+    <updated>2026-11-17T10:00:00Z</updated>
+    <link type="text/html" rel="alternate" href="https://github.com/bug-zi/bugzia-notes/releases/tag/v1.0.0"/>
+    <title>v1.0.0</title>
+  </entry>
+</feed>`
+
+func newAtomTestConfig(ts *httptest.Server) *Config {
+	return &Config{RepoBase: ts.URL, AssetName: "bugzia-notes.exe", Client: ts.Client()}
 }
 
 func TestLatest(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/releases/latest" {
+		if r.URL.Path != "/releases.atom" {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-		  "tag_name": "v1.1.0",
-		  "body": "修复若干问题",
-		  "assets": [
-		    {"name": "notes-src.zip", "browser_download_url": "http://x/src.zip", "size": 10},
-		    {"name": "bugzia-notes.exe", "browser_download_url": "http://x/app.exe", "size": 18300000}
-		  ]
-		}`))
+		w.Header().Set("Content-Type", "application/atom+xml")
+		_, _ = w.Write([]byte(atomFixture))
 	}))
 	defer ts.Close()
 
-	rel, err := Latest(newTestConfig(ts))
+	rel, err := Latest(newAtomTestConfig(ts))
 	if err != nil {
 		t.Fatalf("Latest: %v", err)
 	}
-	if rel.Tag != "v1.1.0" || rel.Notes != "修复若干问题" {
-		t.Fatalf("字段解析错误: %+v", rel)
+	if rel.Tag != "v2.0.0" {
+		t.Fatalf("应取最新条目 tag v2.0.0, got %q", rel.Tag)
 	}
-	if rel.AssetURL != "http://x/app.exe" || rel.AssetSize != 18300000 {
-		t.Fatalf("资产挑选错误: %+v", rel)
+	want := ts.URL + "/releases/latest/download/bugzia-notes.exe"
+	if rel.AssetURL != want {
+		t.Fatalf("下载直链错误: got %q want %q", rel.AssetURL, want)
+	}
+	if rel.AssetSize != 0 {
+		t.Fatalf("atom 路径无声明尺寸, AssetSize 应为 0: %d", rel.AssetSize)
 	}
 }
 
-func TestLatestAssetMissing(t *testing.T) {
+func TestLatestEmptyFeed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9","assets":[{"name":"other.zip","browser_download_url":"http://x/o","size":1}]}`))
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>empty</title></feed>`))
 	}))
 	defer ts.Close()
-	if _, err := Latest(newTestConfig(ts)); err == nil {
-		t.Fatalf("缺目标资产应报错")
+	if _, err := Latest(newAtomTestConfig(ts)); err == nil {
+		t.Fatalf("空 feed（无发布）应报错")
 	}
 }
 
@@ -56,17 +71,17 @@ func TestLatestBadStatus(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer ts.Close()
-	if _, err := Latest(newTestConfig(ts)); err == nil {
+	if _, err := Latest(newAtomTestConfig(ts)); err == nil {
 		t.Fatalf("非 200 应报错")
 	}
 }
 
-func TestLatestBadJSON(t *testing.T) {
+func TestLatestBadFeed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not xml at all"))
 	}))
 	defer ts.Close()
-	if _, err := Latest(newTestConfig(ts)); err == nil {
-		t.Fatalf("坏 JSON 应报错")
+	if _, err := Latest(newAtomTestConfig(ts)); err == nil {
+		t.Fatalf("坏 feed 应报错")
 	}
 }

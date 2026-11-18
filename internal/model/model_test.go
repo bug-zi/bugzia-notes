@@ -17,8 +17,35 @@ func TestDefaultSettingsMatchesBugzia(t *testing.T) {
 	if n.BgAlpha != 0.9 {
 		t.Fatalf("默认透明度不符: %+v", n)
 	}
-	if s.Hotkeys.Toggle != "alt+n" || s.Hotkeys.Create != "alt+shift+c" || s.Hotkeys.DestroyCurrent != "alt+z" {
+	if s.Hotkeys.Toggle != "alt+n" || s.Hotkeys.Main != "alt+c" || s.Hotkeys.DestroyCurrent != "alt+z" {
 		t.Fatalf("默认键位应沿用 bugzia: %+v", s.Hotkeys)
+	}
+}
+
+func TestDefaultSettingsEightKeys(t *testing.T) {
+	h := DefaultSettings().Hotkeys
+	if h.Toggle != "alt+n" || h.Main != "alt+c" || h.DestroyCurrent != "alt+z" {
+		t.Fatalf("三主键默认不对: %+v", h)
+	}
+	for i, want := range []string{"alt+1", "alt+2", "alt+3", "alt+4", "alt+5"} {
+		got := [5]*string{&h.Aux1, &h.Aux2, &h.Aux3, &h.Aux4, &h.Aux5}[i]
+		if *got != want {
+			t.Fatalf("aux%d 默认应为 %s: %s", i+1, want, *got)
+		}
+	}
+}
+
+func TestDefaultAuxColorsValues(t *testing.T) {
+	got := DefaultAuxColors()
+	want := [5]NoteColor{
+		{R: 90, G: 127, B: 168},  // #5A7FA8 雾蓝
+		{R: 94, G: 134, B: 86},   // #5E8656 苔绿
+		{R: 139, G: 111, B: 168}, // #8B6FA8 藤紫
+		{R: 160, G: 116, B: 58},  // #A0743A 琥珀
+		{R: 63, G: 134, B: 128},  // #3F8680 青灰
+	}
+	if got != want {
+		t.Fatalf("默认五色不对: %+v", got)
 	}
 }
 

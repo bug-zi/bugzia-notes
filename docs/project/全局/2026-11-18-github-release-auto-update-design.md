@@ -50,13 +50,12 @@ updater 对外接口（包内其余不导出；签名以实施计划为准，此
 
 ```go
 type Release struct {
-    Tag       string // 如 "v1.1.0"
-    Notes     string // release body（更新说明）
-    AssetURL  string // bugzia-notes.exe 资产下载地址
-    AssetSize int64  // 资产字节数
+    Tag       string // 最新发布 tag，如 "v2.0.0"
+    AssetURL  string // latest/download 确定式下载直链
+    AssetSize int64  // 声明尺寸；atom 路径为 0（下载时以响应 Content-Length 为准）
 }
-type Config struct { RepoAPI, RepoPage, AssetName, DataDir, Current string; Client *http.Client }
-func Latest(c *Config) (*Release, error)                  // 查 releases/latest
+type Config struct { RepoBase, AssetName, DataDir, Current string; Client *http.Client }
+func Latest(c *Config) (*Release, error)                  // 查 releases.atom 取最新 tag
 func IsNewer(latest, current string) (bool, error)        // semver 比较，非法串报错
 func Download(c *Config, rel *Release, destDir string) (string, error) // 下载到 destDir 临时名，校验大小
 func CleanupStale(destDir string)                         // 清理上次更新中断残留
@@ -78,7 +77,7 @@ func ExeDir() string                                      // 当前 exe 所在�
                 IsNewer? ──否──► 结束
                      │是
                      ▼
-            弹框「新版 vX.Y.Z + 更新说明 + [更新] [跳过]」
+            弹框「新版 vX.Y.Z + [更新] [跳过]」
                      │点更新
                      ▼
      Download 到 exe 同目录 bugzia-notes.update.exe
@@ -96,7 +95,8 @@ func ExeDir() string                                      // 当前 exe 所在�
 
 ## 6. 关键细节
 
-- **检查源**：`GET https://api.github.com/repos/bug-zi/bugzia-notes/releases/latest`，读 `tag_name`、`body`、assets 中 name 为 `bugzia-notes.exe` 的 `browser_download_url` 与 `size`；无该资产视为异常报错
+- **检查源**：`GET <RepoBase>/releases.atom`（不受 GitHub API 匿名配额限制），取最新条目 `/releases/tag/` 尾段为最新 tag；**下载**：`<RepoBase>/releases/latest/download/<资产名>` 确定式直链（GitHub 永久重定向到最新资产）。教训：曾用 `api.github.com/releases/latest`，共享代理出口 IP 下匿名 60 次/小时配额极易耗尽（403 rate limit exceeded，2026-11-18 全链路实测命中），已弃用 API 端点；更新说明正文（body）因此不可得，弹框只展示版本号
+- **尺寸校验**：声明尺寸（AssetSize>0）或响应 Content-Length 取其一做完整性校验；atom 路径无声明尺寸，以响应 Content-Length 为准
 - **代理**：构建 `http.Client`：`HTTPS_PROXY/HTTP_PROXY` 环境变量（大小写均认）→ 注册表 `HKCU\...\Internet Settings` 的 `ProxyEnable=1` 时取 `ProxyServer`（`//go:build windows`，非 Windows 返回空直连）→ 直连；检查与下载共用 15s 超时
 - **下载完整性**：响应 `Content-Length` 与 `Release.AssetSize` 一致才落盘为成品（`.update.exe` 内部先写 `.part`）
 - **回退**：每次更新保留 `bugzia-notes.exe.bak`；新版异常时手动改回文件名即可
@@ -107,9 +107,10 @@ func ExeDir() string                                      // 当前 exe 所在�
 
 1. 开发者自行 git 提交代码（AI 不动 git）
 2. 开发者说「发布 vX.Y.Z」
-3. AI 执行：改 `settingsui.Version` → `go build -ldflags="-H windowsgui" -o bugzia-notes.exe .` → `go build ./... && go vet ./... && go test ./...` 全绿 → `gh release create vX.Y.Z bugzia-notes.exe --title "vX.Y.Z" --notes "<说明>"`
+3. AI 执行：改 `settingsui.Version` → 备份旧稳定版（根目录 exe 复制为 `.bak`，仅当 `.bak` 尚不存在时——更新流程产生的 `.bak` 优先保留）→ `go build -ldflags="-H windowsgui" -o bugzia-notes.exe .` → `go build ./... && go vet ./... && go test ./...` 全绿 → `gh release create vX.Y.Z bugzia-notes.exe --title "vX.Y.Z" --notes "<说明>"`
 4. notes 由当期开发日志整理成草稿，开发者过目后发布（或授权直接发）
 5. 资产名固定 `bugzia-notes.exe`（§6 检查源依赖此名）；版本号规则 `v<主>.<次>.<补>`，与 `settingsui.Version` 一致
+6. 构建产物分离约定：开发测试一律 `go build -o bugzia-notes-dev.exe .`（独立文件名），根目录 `bugzia-notes.exe` 只在发布流程中被写入（见 CLAUDE.md 常用命令）
 
 ## 8. 已决实现细节（写计划前经 Wails 源码核实，无弹窗实验）
 

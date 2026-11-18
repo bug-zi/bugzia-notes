@@ -16,7 +16,7 @@ import (
 )
 
 // Version 应用版本（设置窗口展示）。
-const Version = "v1.0.0"
+const Version = "v2.0.0"
 
 // Service 暴露给前端的服务（Wails 绑定）。
 type Service struct {
@@ -93,6 +93,24 @@ func (s *Service) ApplyNoteStyleFor(id string, style model.NoteStyle) error {
 	return s.ctl.ApplyNoteStyleFor(id, style)
 }
 
+// ApplyAuxColors 写入辅助便签五色（值域 clamp）：实时生效（全体便签重推，
+// 辅助便签背景按槽位色重算）并落盘。
+func (s *Service) ApplyAuxColors(colors [5]model.NoteColor) error {
+	for i := range colors {
+		colors[i].R = int(model.ClampU8(colors[i].R))
+		colors[i].G = int(model.ClampU8(colors[i].G))
+		colors[i].B = int(model.ClampU8(colors[i].B))
+	}
+	cur := s.st.Settings()
+	cur.AuxColors = colors
+	if err := s.st.SaveSettingsNow(cur); err != nil {
+		return err
+	}
+	log.Printf("[style] 辅助五色已应用并落盘")
+	s.ctl.ApplySettings(cur)
+	return nil
+}
+
 // GetAutoStart 读开机自启动状态（注册表 Run 键为事实来源）。
 // 读失败按未启用处理并记日志（开关仍可写，写入成功即恢复一致）。
 func (s *Service) GetAutoStart() bool {
@@ -163,8 +181,8 @@ func MigrateBugziaConfigFull(st *store.Store, ctl *wm.Controller, mgr *hotkey.Ma
 	if cfg.Hotkeys.Toggle != "" {
 		cur.Hotkeys.Toggle = cfg.Hotkeys.Toggle
 	}
-	if cfg.Hotkeys.Create != "" {
-		cur.Hotkeys.Create = cfg.Hotkeys.Create
+	if cfg.Hotkeys.Main != "" {
+		cur.Hotkeys.Main = cfg.Hotkeys.Main
 	}
 	if cfg.Hotkeys.DestroyCurrent != "" {
 		cur.Hotkeys.DestroyCurrent = cfg.Hotkeys.DestroyCurrent

@@ -25,7 +25,7 @@
 - Modify: `internal/model/model.go`
 - Test: `internal/model/model_test.go`（追加）
 
-- [ ] **Step 1: 写失败测试**（追加到 `internal/model/model_test.go`）
+- [x] **Step 1: 写失败测试**（追加到 `internal/model/model_test.go`）
 
 ```go
 func TestDefaultSettingsEightKeys(t *testing.T) {
@@ -56,12 +56,12 @@ func TestDefaultAuxColorsValues(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/model/ -run 'TestDefaultSettingsEightKeys|TestDefaultAuxColorsValues' -v`
 Expected: FAIL（编译错误：`Main`/`Aux1..5`/`DefaultAuxColors` 未定义）
 
-- [ ] **Step 3: 实现**（`internal/model/model.go`）
+- [x] **Step 3: 实现**（`internal/model/model.go`）
 
 ① 常量区：`MaxNotes` 50 → 6，加 `SlotMain`：
 
@@ -147,17 +147,17 @@ func DefaultAuxColors() [5]NoteColor {
 }
 ```
 
-- [ ] **Step 4: 跑测试转绿**
+- [x] **Step 4: 跑测试转绿**
 
 Run: `go test ./internal/model/ -v`
 Expected: PASS（含原有用例）
 
-- [ ] **Step 5: 回归**
+- [x] **Step 5: 回归**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: 全绿（`Create` 字段保留，下游 `ParseAll` 等暂不受影响仍可编译）
 
-- [ ] **Step 6: 建议提交**（开发者执行）
+- [x] **Step 6: 建议提交**（开发者执行）
 
 ```
 git add internal/model/model.go internal/model/model_test.go
@@ -172,7 +172,7 @@ git commit -m "feat(model): 槽位字段 + 八键设置 + 辅助五色默认值"
 - Modify: `internal/store/store.go`
 - Test: `internal/store/store_test.go`（追加）
 
-- [ ] **Step 1: 写失败测试**（追加到 `internal/store/store_test.go`；`rec()` helper 已存在）
+- [x] **Step 1: 写失败测试**（追加到 `internal/store/store_test.go`；`rec()` helper 已存在）
 
 ```go
 func writeNotesFileV1(t *testing.T, path string, recs []model.NoteRecord) {
@@ -228,12 +228,12 @@ func TestLoadNotesBareArrayMigratesToMain(t *testing.T) {
 
 注意：现有 `TestLoadNotesLegacyBareArray` 期望裸数组兼容读出 1 条——迁移后仍返回 1 条（ID "x"），该测试应继续通过，无需改动。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/store/ -run 'TestLoadNotesV1Migrates|TestLoadNotesBareArrayMigrates' -v`
 Expected: FAIL（`Slot` 为 0 但其余记录未被丢弃 / 无备份文件 → `len(got)==3`）
 
-- [ ] **Step 3: 实现**（`internal/store/store.go`）
+- [x] **Step 3: 实现**（`internal/store/store.go`）
 
 ① `writeNotes` 版本号改 2：
 
@@ -309,17 +309,17 @@ func (s *Store) migrateNotesToV2(notes []model.NoteRecord) []model.NoteRecord {
 }
 ```
 
-- [ ] **Step 4: 跑测试转绿**
+- [x] **Step 4: 跑测试转绿**
 
 Run: `go test ./internal/store/ -v`
 Expected: PASS（含原有全部用例——`TestSaveLoadRoundTrip` 走 `SaveNotesNow`→v2 直读不受影响）
 
-- [ ] **Step 5: 回归**
+- [x] **Step 5: 回归**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: 全绿
 
-- [ ] **Step 6: 建议提交**
+- [x] **Step 6: 建议提交**
 
 ```
 git add internal/store/store.go internal/store/store_test.go
@@ -334,7 +334,7 @@ git commit -m "feat(store): notes.json v1→v2 槽位迁移（最新→主便签
 - Modify: `internal/store/store.go`
 - Test: `internal/store/store_test.go`（追加）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```go
 func TestLoadSettingsV1InheritsCreateToMain(t *testing.T) {
@@ -394,12 +394,12 @@ func TestLoadSettingsV2TrustsFileValues(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/store/ -run 'TestLoadSettingsV1|TestLoadSettingsV2' -v`
 Expected: FAIL（`Main` 为空——现状 loadSettings 只补 Toggle/Create/DestroyCurrent）
 
-- [ ] **Step 3: 实现**（`internal/store/store.go`）
+- [x] **Step 3: 实现**（`internal/store/store.go`）
 
 ① `settingsFile` 加字段；② `SaveSettingsNow` 版本 2 + 带槽位色；③ `loadSettings` 按版本升级：
 
@@ -455,17 +455,17 @@ func (s *Store) SaveSettingsNow(v model.Settings) error {
 
 注意：原 `loadSettings` 里「空 Toggle/Create/DestroyCurrent 补默认」的三段 if 整体删除（v2 信任文件值；v1 的空值在升级分支中已被尊重保留）。
 
-- [ ] **Step 4: 跑测试转绿**
+- [x] **Step 4: 跑测试转绿**
 
 Run: `go test ./internal/store/ -v`
 Expected: PASS。若 `TestSettingsRoundTripWithNormalization` 失败（它依赖「损坏回退默认」），确认其逻辑未受影响——损坏文件走 `json.Unmarshal` 失败分支回退 `def`，不受版本逻辑影响，应继续通过。
 
-- [ ] **Step 5: 回归**
+- [x] **Step 5: 回归**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: 全绿
 
-- [ ] **Step 6: 建议提交**
+- [x] **Step 6: 建议提交**
 
 ```
 git add internal/store/store.go internal/store/store_test.go
@@ -480,7 +480,7 @@ git commit -m "feat(store): settings.json v1→v2（create→main 继承 + 槽�
 - Modify: `internal/hotkey/hotkey.go`
 - Test: `internal/hotkey/hotkey_test.go`（替换两个 ParseAll 用例 + 新增 Label 用例）
 
-- [ ] **Step 1: 改测试**（`internal/hotkey/hotkey_test.go`）
+- [x] **Step 1: 改测试**（`internal/hotkey/hotkey_test.go`）
 
 删除 `TestParseAllDetectsDuplicate` 与 `TestParseAllEmptyMeansDisabled`，替换为：
 
@@ -531,12 +531,12 @@ func TestLabelCoversEightKeys(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/hotkey/ -v`
 Expected: FAIL（`IDMain`/`IDAux1..5` 未定义；默认键位只解析出 3 键）
 
-- [ ] **Step 3: 实现**（`internal/hotkey/hotkey.go`）
+- [x] **Step 3: 实现**（`internal/hotkey/hotkey.go`）
 
 ① id 表与 Label：
 
@@ -597,12 +597,12 @@ func ParseAll(h model.HotkeySettings) (map[int]Combo, error) {
 	// ……（其余原样保留：解析、FormatCombo 查重、seen 表）
 ```
 
-- [ ] **Step 4: 跑测试转绿**
+- [x] **Step 4: 跑测试转绿**
 
 Run: `go test ./internal/hotkey/ -v`
 Expected: PASS
 
-- [ ] **Step 5: 回归 + 建议提交**
+- [x] **Step 5: 回归 + 建议提交**
 
 Run: `go build ./... && go vet ./... && go test ./...`（`main.go` 仍引用 `hotkey.IDCreate` 会**编译失败**——这是预期中间态，紧接着在 Task 8 修复；本任务先只跑 `go build ./internal/...` 确认包级绿，全量回归推迟到 Task 8）
 
@@ -621,7 +621,7 @@ git commit -m "feat(hotkey): 快捷键 id 表扩到八键（IDMain + IDAux1~5）
 - Modify: `internal/wm/style.go`、`internal/wm/controller.go`（仅签名适配）、`internal/wm/style_test.go`
 - Test: `internal/wm/style_test.go`（重写）
 
-- [ ] **Step 1: 重写 `internal/wm/style_test.go`**（原 `TestEffectiveStyleNilFollowsGlobal`/`TestEffectiveStyleOwnStyleWhenLocked` 改签名后并入）
+- [x] **Step 1: 重写 `internal/wm/style_test.go`**（原 `TestEffectiveStyleNilFollowsGlobal`/`TestEffectiveStyleOwnStyleWhenLocked` 改签名后并入）
 
 ```go
 package wm
@@ -663,12 +663,12 @@ func TestEffectiveStyleMainFollowsGlobal(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/wm/ -run TestEffectiveStyle -v`
 Expected: FAIL（编译错误：`EffectiveStyle` 第二参数是 `model.NoteSettings`）
 
-- [ ] **Step 3: 实现**（`internal/wm/style.go` 整体替换）
+- [x] **Step 3: 实现**（`internal/wm/style.go` 整体替换）
 
 ```go
 package wm
@@ -700,7 +700,7 @@ func EffectiveStyle(rec model.NoteRecord, s model.Settings) model.NoteStyle {
 }
 ```
 
-- [ ] **Step 4: 适配 `internal/wm/controller.go` 全部调用点**（纯签名替换，行为不变）
+- [x] **Step 4: 适配 `internal/wm/controller.go` 全部调用点**（纯签名替换，行为不变）
 
 四处调用，第二参数 `c.store.Settings().Note` → `c.store.Settings()`（或对应变量）：
 
@@ -709,12 +709,12 @@ func EffectiveStyle(rec model.NoteRecord, s model.Settings) model.NoteStyle {
 - `SetNoteStyleLock`：`global := c.store.Settings()`，两处 `EffectiveStyle(n.rec, global)` / `EffectiveStyle(rec, global)` 不动（global 类型随之变为 `model.Settings`）
 - `ApplySettings`：`c.ops.Hydrate(id, recs[i], EffectiveStyle(recs[i], s))`（`s` 即 `model.Settings` 参数）
 
-- [ ] **Step 5: 跑测试转绿 + 回归**
+- [x] **Step 5: 跑测试转绿 + 回归**
 
 Run: `go test ./internal/wm/ -v && go build ./internal/... && go vet ./internal/...`
 Expected: 全绿（main.go 若因 Task 4 未接续而失败，忽略 main 包；其余包必须绿）
 
-- [ ] **Step 6: 建议提交**
+- [x] **Step 6: 建议提交**
 
 ```
 git add internal/wm/style.go internal/wm/style_test.go internal/wm/controller.go
@@ -729,7 +729,7 @@ git commit -m "feat(wm): EffectiveStyle 三级优先（锁>槽位色>全局）"
 - Modify: `internal/wm/controller.go`
 - Test: `internal/wm/controller_test.go`（大量改造 + 新增）
 
-- [ ] **Step 1: 写失败测试**（追加到 `internal/wm/controller_test.go`；fakeOps/newTestController/noteIDs 已存在）
+- [x] **Step 1: 写失败测试**（追加到 `internal/wm/controller_test.go`；fakeOps/newTestController/noteIDs 已存在）
 
 先加两个读态 helper（放在 `setPinnedForTest` 之后）：
 
@@ -892,12 +892,12 @@ func TestImportRecordsAssignsSlotsByRecency(t *testing.T) {
 
 （`json`/`os`/`filepath`/`fmt` 若未在测试文件 import，需要补。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/wm/ -run 'TestToggleSlot|TestDestroyClearsSlot|TestStartRestores|TestStartHiddenPrebuilds|TestAuxNoteStyleLock|TestImportRecordsAssigns' -v`
 Expected: FAIL（编译错误：`ToggleSlot` 未定义）
 
-- [ ] **Step 3: 实现 controller.go**
+- [x] **Step 3: 实现 controller.go**
 
 ① `CreateBlankNote` 整体替换为 `ToggleSlot` + `createSlotNote`（`canAdd` 的提示文案 50→6）：
 
@@ -1016,7 +1016,7 @@ func (c *Controller) ImportRecords(recs []model.NoteRecord) int {
 }
 ```
 
-- [ ] **Step 4: 改造既有测试里的 `CreateBlankNote` 调用**
+- [x] **Step 4: 改造既有测试里的 `CreateBlankNote` 调用**
 
 替换规则（逐测试函数处理；同一函数内第 i 次 `ctl.CreateBlankNote()` / `seed.CreateBlankNote()` → `ctl.ToggleSlot(i)` / `seed.ToggleSlot(i)`，i 从 0 递增——槽位唯一性保证每次调用都是「新建」而非「切换」）：
 
@@ -1049,17 +1049,17 @@ func TestToggleSlotFillsSixSlots(t *testing.T) {
 - 其余（:173、:185-186、:212、:226/229、:255、:285、:356、:385、:398、:425-426、:451、:474、:485 附近）：同规则替换；涉及样式锁的既有用例（:451 之后若干）替换后便签 Slot=0（主便签），锁行为断言应全部照旧通过
 - `TestImportRecordsKeepsNegativeCoords`（:337）：逻辑不变（单条记录 → Slot 0），应继续通过
 
-- [ ] **Step 5: 跑测试转绿**
+- [x] **Step 5: 跑测试转绿**
 
 Run: `go test ./internal/wm/ -v`
 Expected: PASS
 
-- [ ] **Step 6: 回归**
+- [x] **Step 6: 回归**
 
 Run: `go build ./... && go vet ./...`
 Expected: `main.go` 会失败（`ctl.CreateBlankNote`/`hotkey.IDCreate` 已不存在）——**预期中间态**，Task 8 修复。包级 `go build ./internal/... && go test ./internal/...` 必须绿。
 
-- [ ] **Step 7: 建议提交**
+- [x] **Step 7: 建议提交**
 
 ```
 git add internal/wm/controller.go internal/wm/controller_test.go
@@ -1074,14 +1074,14 @@ git commit -m "feat(wm): ToggleSlot 三态切换 + 启动补建主便签 + 辅�
 - Modify: `internal/importx/bugzia_settings.go`、`internal/settingsui/service.go`
 - Test: `internal/importx/bugzia_settings_test.go`（字段断言更新）
 
-- [ ] **Step 1: 改 importx 测试**（`bugzia_settings_test.go`）：把对 `cfg.Hotkeys.Create` 的断言改为 `cfg.Hotkeys.Main`（该文件现有用例覆盖 note_create 解析，字段名替换即可，语义不变：bugzia 的「直接新建」键迁移后即主便签键）
+- [x] **Step 1: 改 importx 测试**（`bugzia_settings_test.go`）：把对 `cfg.Hotkeys.Create` 的断言改为 `cfg.Hotkeys.Main`（该文件现有用例覆盖 note_create 解析，字段名替换即可，语义不变：bugzia 的「直接新建」键迁移后即主便签键）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `go test ./internal/importx/ -v`
 Expected: FAIL（`Main` 仍为空、`Create` 有值）
 
-- [ ] **Step 3: 实现 importx**（`bugzia_settings.go` :97-101）
+- [x] **Step 3: 实现 importx**（`bugzia_settings.go` :97-101）
 
 ```go
 	out.Hotkeys.Toggle = adopt("集合切换", f.Hotkey.Note)
@@ -1091,7 +1091,7 @@ Expected: FAIL（`Main` 仍为空、`Create` 有值）
 		out.Hotkeys.DestroyCurrent != ""
 ```
 
-- [ ] **Step 4: 实现 settingsui**（`service.go`）
+- [x] **Step 4: 实现 settingsui**（`service.go`）
 
 ① `MigrateBugziaConfigFull` 的键位合并（:148-156）`Create` → `Main`：
 
@@ -1131,12 +1131,12 @@ func (s *Service) ApplyAuxColors(colors [5]model.NoteColor) error {
 
 ③ 版本号：`const Version = "v1.0.0"` → `"v2.0.0"`（交互模型大版本变更，设置窗口展示用）。
 
-- [ ] **Step 5: 跑测试转绿 + 回归**
+- [x] **Step 5: 跑测试转绿 + 回归**
 
 Run: `go test ./internal/importx/ ./internal/settingsui/ -v && go build ./internal/... && go vet ./internal/...`
 Expected: 全绿
 
-- [ ] **Step 6: 建议提交**
+- [x] **Step 6: 建议提交**
 
 ```
 git add internal/importx/bugzia_settings.go internal/importx/bugzia_settings_test.go internal/settingsui/service.go
@@ -1152,7 +1152,7 @@ git commit -m "feat(settingsui): bugzia create→main 映射 + ApplyAuxColors + 
 
 （无新单测；`go build ./...` 全量回归在此任务收口）
 
-- [ ] **Step 1: `dispatchHotkey` 八键接线**（:123-132 整体替换）
+- [x] **Step 1: `dispatchHotkey` 八键接线**（:123-132 整体替换）
 
 ```go
 func dispatchHotkey(ctl *wm.Controller, id int) {
@@ -1177,7 +1177,7 @@ func dispatchHotkey(ctl *wm.Controller, id int) {
 }
 ```
 
-- [ ] **Step 2: 托盘加「召唤主便签」**（`initTray` :149-165 加 ctl 参数 + 首项；`main()` 调用点 `initTray(app)` → `initTray(app, ctl)`）
+- [x] **Step 2: 托盘加「召唤主便签」**（`initTray` :149-165 加 ctl 参数 + 首项；`main()` 调用点 `initTray(app)` → `initTray(app, ctl)`）
 
 ```go
 func initTray(app *application.App, ctl *wm.Controller) {
@@ -1200,7 +1200,7 @@ func initTray(app *application.App, ctl *wm.Controller) {
 }
 ```
 
-- [ ] **Step 3: Hydrate 载荷带 slot**（`wailsOps.Hydrate` :383-389）
+- [x] **Step 3: Hydrate 载荷带 slot**（`wailsOps.Hydrate` :383-389）
 
 ```go
 	win.EmitEvent("note:hydrate", map[string]any{
@@ -1213,12 +1213,12 @@ func initTray(app *application.App, ctl *wm.Controller) {
 	})
 ```
 
-- [ ] **Step 4: 全量回归**
+- [x] **Step 4: 全量回归**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: 全绿（所有包，含 main）
 
-- [ ] **Step 5: 建议提交**
+- [x] **Step 5: 建议提交**
 
 ```
 git add main.go
@@ -1232,7 +1232,7 @@ git commit -m "feat(main): 八键 dispatch + 托盘召唤主便签 + hydrate 载
 **Files:**
 - Modify: `frontend/index.html`、`frontend/assets/settings.js`
 
-- [ ] **Step 1: `frontend/index.html`**
+- [x] **Step 1: `frontend/index.html`**
 
 ① 快捷键区（:27-41）整体替换：
 
@@ -1285,7 +1285,7 @@ git commit -m "feat(main): 八键 dispatch + 托盘召唤主便签 + hydrate 载
   </div>
 ```
 
-- [ ] **Step 2: `frontend/assets/settings.js`**
+- [x] **Step 2: `frontend/assets/settings.js`**
 
 ① `hk` 映射（:14-16）替换：
 
@@ -1361,12 +1361,12 @@ for (const el of auxInputs) el.addEventListener("input", applyAuxColors);
     });
 ```
 
-- [ ] **Step 3: 构建验证**
+- [x] **Step 3: 构建验证**
 
 Run: `go build ./...`（前端为 embed 资源，构建即验证内嵌完整性）
 Expected: 成功
 
-- [ ] **Step 4: 建议提交**
+- [x] **Step 4: 建议提交**
 
 ```
 git add frontend/index.html frontend/assets/settings.js
@@ -1380,7 +1380,7 @@ git commit -m "feat(settings-ui): 八键行 + 辅助五色取色器"
 **Files:**
 - Modify: `frontend/assets/note.js`
 
-- [ ] **Step 1: hydrate 处理加 slot**（`note.js` :48-52 替换）
+- [x] **Step 1: hydrate 处理加 slot**（`note.js` :48-52 替换）
 
 ```js
 wails.Events.On("note:hydrate", (ev) => {
@@ -1393,12 +1393,12 @@ wails.Events.On("note:hydrate", (ev) => {
 });
 ```
 
-- [ ] **Step 2: 构建验证**
+- [x] **Step 2: 构建验证**
 
 Run: `go build -o /tmp/bn-test.exe . && rm /tmp/bn-test.exe`（Windows 下可用临时目录）
 Expected: 成功（前端语法错误会在构建期暴露不了——JS 是运行时解析，需手测覆盖）
 
-- [ ] **Step 3: 建议提交**
+- [x] **Step 3: 建议提交**
 
 ```
 git add frontend/assets/note.js
@@ -1412,17 +1412,17 @@ git commit -m "feat(note-ui): 辅助便签隐藏样式锁入口（槽位色唯�
 **Files:**
 - Regenerate: `frontend/bindings/`（勿手改）
 
-- [ ] **Step 1: 再生成绑定**
+- [x] **Step 1: 再生成绑定**
 
 Run: `wails3 generate bindings`
 Expected: `frontend/bindings/bugzia-notes/internal/settingsui/service.js` 出现 `ApplyAuxColors`；model 绑定含 `Main`/`Aux1..5`/`AuxColors`/`Slot`/`NoteColor`
 
-- [ ] **Step 2: 全量回归**
+- [x] **Step 2: 全量回归**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: 全绿
 
-- [ ] **Step 3: 建议提交**
+- [x] **Step 3: 建议提交**
 
 ```
 git add frontend/bindings/
@@ -1436,7 +1436,7 @@ git commit -m "chore(bindings): 重新生成（ApplyAuxColors + 八键设置 + S
 **Files:**
 - Modify: `CLAUDE.md`（关键领域规则段）、`docs/log/261118.md`（或实施当日日志）
 
-- [ ] **Step 1: 更新 `CLAUDE.md` 关键领域规则**（把「双层模型/召唤语义/便签上限 50/三键」等条目改为槽位模型表述）：
+- [x] **Step 1: 更新 `CLAUDE.md` 关键领域规则**（把「双层模型/召唤语义/便签上限 50/三键」等条目改为槽位模型表述）：
 
 - 双层模型条目保留原文（钉住/沉底机制不变）
 - 「便签上限 50 张」→「6 槽位（1 主 + 5 辅，`MaxNotes=6`）；主便签缺失启动自动补建」
@@ -1444,7 +1444,7 @@ git commit -m "chore(bindings): 重新生成（ApplyAuxColors + 八键设置 + S
 - 新增：「辅助便签底色 = 槽位色设置（`AuxColors`），样式锁仅主便签可用；`EffectiveStyle` 优先级锁 > 槽位色 > 全局」
 - 新增：「notes.json/settings.json 均 v2 形状（带 slot / main+aux 键位 + aux_colors）；v1 读时自动迁移：notes 取最新→主便签其余丢弃（备份 `notes.json.bak-*`），settings create→main 继承」
 
-- [ ] **Step 2: 日志**：按实施当日补一节（含创建时间行），记录任务、验证结果、遗留项。
+- [x] **Step 2: 日志**：按实施当日补一节（含创建时间行），记录任务、验证结果、遗留项。
 
 - [ ] **Step 3: 手测闸口交接（开发者执行，全部通过才算交付）**
 

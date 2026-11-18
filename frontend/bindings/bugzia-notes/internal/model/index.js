@@ -4,6 +4,7 @@
 
 export {
     HotkeySettings,
+    NoteColor,
     NoteSettings,
     NoteStyle,
     RecycleEntry,

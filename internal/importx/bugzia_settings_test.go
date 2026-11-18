@@ -46,9 +46,9 @@ func TestImportBugziaSettings(t *testing.T) {
 	if !cfg.HasHotkeys {
 		t.Fatal("应识别快捷键段")
 	}
-	if cfg.Hotkeys.Toggle != "alt+c" || cfg.Hotkeys.Create != "alt+shift+c" ||
+	if cfg.Hotkeys.Toggle != "alt+c" || cfg.Hotkeys.Main != "alt+shift+c" ||
 		cfg.Hotkeys.DestroyCurrent != "alt+z" {
-		t.Fatalf("三键应迁移（summon 不迁移）: %+v", cfg.Hotkeys)
+		t.Fatalf("三键应迁移（bugzia note_create→主便签键；summon 不迁移）: %+v", cfg.Hotkeys)
 	}
 	if len(cfg.SkippedHk) != 0 {
 		t.Fatalf("不应有跳过键位: %v", cfg.SkippedHk)
@@ -62,7 +62,7 @@ func TestImportBugziaSettingsSkipsInvalidHotkey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
-	if cfg.Hotkeys.Toggle != "alt+c" || cfg.Hotkeys.Create != "" {
+	if cfg.Hotkeys.Toggle != "alt+c" || cfg.Hotkeys.Main != "" {
 		t.Fatalf("合法键位应保留、非法键位应跳过: %+v", cfg.Hotkeys)
 	}
 	if len(cfg.SkippedHk) != 1 {

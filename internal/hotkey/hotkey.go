@@ -22,11 +22,17 @@ const (
 	modWin   = 0x0008 // MOD_WIN
 )
 
-// 键位 id 约定：1=集合切换 2=直接新建 3=销毁当前。
+// 键位 id 约定：1=集合切换 2=主便签 3=销毁当前 4~8=辅助便签 1~5
+//（2026-11-18 槽位模型；原 2=IDCreate 改语义为主便签召唤）。
 const (
 	IDToggle = 1
-	IDCreate = 2
+	IDMain   = 2
 	IDKill   = 3
+	IDAux1   = 4
+	IDAux2   = 5
+	IDAux3   = 6
+	IDAux4   = 7
+	IDAux5   = 8
 )
 
 // Label 键位 id 的可读名（冲突报告用）。
@@ -34,10 +40,20 @@ func Label(id int) string {
 	switch id {
 	case IDToggle:
 		return "集合切换"
-	case IDCreate:
-		return "直接新建"
+	case IDMain:
+		return "主便签"
 	case IDKill:
 		return "销毁当前"
+	case IDAux1:
+		return "辅助便签 1"
+	case IDAux2:
+		return "辅助便签 2"
+	case IDAux3:
+		return "辅助便签 3"
+	case IDAux4:
+		return "辅助便签 4"
+	case IDAux5:
+		return "辅助便签 5"
 	}
 	return fmt.Sprintf("#%d", id)
 }
@@ -113,14 +129,18 @@ func vkToName(vk uint32) string {
 	return strconv.FormatUint(uint64(vk), 10)
 }
 
-// ParseAll 解析三条键位并查重（设置界面保存前调用）。
-// 返回 id->Combo：IDToggle / IDCreate / IDKill。留空 = 禁用该快捷键（spec §9）。
+// ParseAll 解析八条键位并查重（设置界面保存前调用）。
+// 返回 id->Combo：IDToggle / IDMain / IDKill / IDAux1~IDAux5。留空 = 禁用该快捷键。
 func ParseAll(h model.HotkeySettings) (map[int]Combo, error) {
 	type item struct {
 		id int
 		s  string
 	}
-	items := []item{{IDToggle, h.Toggle}, {IDCreate, h.Create}, {IDKill, h.DestroyCurrent}}
+	items := []item{
+		{IDToggle, h.Toggle}, {IDMain, h.Main}, {IDKill, h.DestroyCurrent},
+		{IDAux1, h.Aux1}, {IDAux2, h.Aux2}, {IDAux3, h.Aux3},
+		{IDAux4, h.Aux4}, {IDAux5, h.Aux5},
+	}
 	out := make(map[int]Combo, len(items))
 	seen := map[string]int{}
 	for _, it := range items {

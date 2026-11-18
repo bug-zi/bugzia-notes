@@ -48,6 +48,9 @@ const NS = "bugzia-notes/internal/settingsui.Service.";
 wails.Events.On("note:hydrate", (ev) => {
   const data = ev && ev.data;
   if (!data || data.id !== id) return; // 只认发给自己的（防串台）
+  const slot = data.slot ?? 0;
+  btnStyle.hidden = slot >= 1; // 辅助便签禁用样式锁：底色由槽位色统一设置
+  if (slot >= 1 && panelOpen) closePanel();
   applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked);
 });
 

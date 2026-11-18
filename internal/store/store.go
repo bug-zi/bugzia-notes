@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,9 +29,10 @@ type notesFile struct {
 }
 
 type settingsFile struct {
-	Version int                  `json:"version"`
-	Note    model.NoteSettings   `json:"note"`
-	Hotkeys model.HotkeySettings `json:"hotkeys"`
+	Version   int                  `json:"version"`
+	Note      model.NoteSettings   `json:"note"`
+	Hotkeys   model.HotkeySettings `json:"hotkeys"`
+	AuxColors [5]model.NoteColor   `json:"aux_colors"`
 }
 
 type recycleFile struct {
@@ -66,26 +68,64 @@ func (s *Store) SettingsPath() string { return filepath.Join(s.dir, settingsFile
 func (s *Store) RecyclePath() string  { return filepath.Join(s.dir, recycleFileName) }
 
 // LoadNotes 读已持久化便签（全量含未钉）。缺失 / 损坏一律回退空表
-// （与 bugzia 行为一致），兼容 {notes:[...]} 与裸数组 legacy 两种形状。
+//（与 bugzia 行为一致），兼容 {notes:[...]} 与裸数组 legacy 两种形状；
+// v1（版本 < 2，含裸数组）触发槽位模型升级迁移（design §5.1）。
 func (s *Store) LoadNotes() []model.NoteRecord {
 	data, err := os.ReadFile(s.NotesPath())
 	if err != nil {
 		return nil
 	}
 	trimmed := bytes.TrimLeft(data, " \t\r\n")
+	var f notesFile
 	if len(trimmed) > 0 && trimmed[0] == '[' {
 		var arr []model.NoteRecord
-		if json.Unmarshal(data, &arr) == nil {
-			return arr
+		if json.Unmarshal(data, &arr) != nil {
+			return nil
 		}
+		f = notesFile{Version: 1, Notes: arr} // 裸数组 legacy = v1 语义
+	} else {
+		if err := json.Unmarshal(data, &f); err != nil {
+			log.Printf("[store] notes.json 损坏，回退空表: %v", err)
+			return nil
+		}
+	}
+	if f.Version >= 2 {
+		return f.Notes
+	}
+	return s.migrateNotesToV2(f.Notes)
+}
+
+// migrateNotesToV2 v1 → v2 槽位模型升级：最新更新的自由便签升级为主便签
+//（Slot=0，字段全保留），其余不加载；原文件改名备份留存后立即以 v2 落盘
+//（docs/project/便签/2026-11-18-slot-model-design.md §5.1）。
+// 改名失败：原文件不动、按空表启动（防半迁移态，下次启动重试）；
+// v2 重写失败仅记日志（内存已是 v2 语义，后续防抖保存补写）。
+func (s *Store) migrateNotesToV2(notes []model.NoteRecord) []model.NoteRecord {
+	if len(notes) == 0 {
 		return nil
 	}
-	var f notesFile
-	if err := json.Unmarshal(data, &f); err != nil {
-		log.Printf("[store] notes.json 损坏，回退空表: %v", err)
+	backup := s.NotesPath() + ".bak-" + time.Now().Format("20060102-150405")
+	if _, err := os.Stat(backup); err == nil {
+		backup += "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	if err := os.Rename(s.NotesPath(), backup); err != nil {
+		log.Printf("[store] notes.json v1 备份改名失败，放弃迁移（按空表启动）: %v", err)
 		return nil
 	}
-	return f.Notes
+	log.Printf("[store] 老数据已备份: %s", backup)
+	latest := 0
+	for i, n := range notes {
+		if n.UpdatedAt > notes[latest].UpdatedAt {
+			latest = i
+		}
+	}
+	main := notes[latest]
+	main.Slot = model.SlotMain
+	out := []model.NoteRecord{main}
+	if err := s.writeNotes(out); err != nil {
+		log.Printf("[store] notes.json v2 重写失败（内存已生效，稍后防抖补写）: %v", err)
+	}
+	return out
 }
 
 // ScheduleNotesSave 防抖保存：delay 内的多次调用合并为一次全量写盘。
@@ -136,7 +176,7 @@ func (s *Store) SaveNotesNow(notes []model.NoteRecord) error {
 }
 
 func (s *Store) writeNotes(notes []model.NoteRecord) error {
-	f := notesFile{Version: 1, Notes: notes}
+	f := notesFile{Version: 2, Notes: notes}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
@@ -158,17 +198,20 @@ func (s *Store) loadSettings() model.Settings {
 		log.Printf("[store] settings.json 损坏，回退默认: %v", err)
 		return def
 	}
-	out := model.Settings{Note: normalizeNote(f.Note, def.Note), Hotkeys: f.Hotkeys}
-	if out.Hotkeys.Toggle == "" {
-		out.Hotkeys.Toggle = def.Hotkeys.Toggle
+	if f.Version < 2 {
+		// v1 → v2：create 继承给 main（含空=禁用，尊重用户原选择），
+		// 辅助键与五色填默认；toggle/destroy 原样保留（空=用户禁用）
+		f.Hotkeys.Main = f.Hotkeys.Create
+		f.Hotkeys.Aux1, f.Hotkeys.Aux2, f.Hotkeys.Aux3, f.Hotkeys.Aux4, f.Hotkeys.Aux5 =
+			def.Hotkeys.Aux1, def.Hotkeys.Aux2, def.Hotkeys.Aux3, def.Hotkeys.Aux4, def.Hotkeys.Aux5
+		f.AuxColors = def.AuxColors
 	}
-	if out.Hotkeys.Create == "" {
-		out.Hotkeys.Create = def.Hotkeys.Create
+	// v2 完全信任文件值：留空 = 禁用是合法状态，不再补默认
+	return model.Settings{
+		Note:      normalizeNote(f.Note, def.Note),
+		Hotkeys:   f.Hotkeys,
+		AuxColors: f.AuxColors,
 	}
-	if out.Hotkeys.DestroyCurrent == "" {
-		out.Hotkeys.DestroyCurrent = def.Hotkeys.DestroyCurrent
-	}
-	return out
 }
 
 // normalizeNote 兜底手工编辑/老版本文件里的零值字段。
@@ -208,7 +251,7 @@ func (s *Store) SetSettings(v model.Settings) {
 // SaveSettingsNow 更新内存态并立即落盘。
 func (s *Store) SaveSettingsNow(v model.Settings) error {
 	s.SetSettings(v)
-	f := settingsFile{Version: 1, Note: v.Note, Hotkeys: v.Hotkeys}
+	f := settingsFile{Version: 2, Note: v.Note, Hotkeys: v.Hotkeys, AuxColors: v.AuxColors}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err

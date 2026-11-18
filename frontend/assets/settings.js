@@ -12,7 +12,9 @@ const fields = {
   radius: $("radius"), font: $("font"), w: $("w"), h: $("h"),
 };
 const hk = {
-  toggle: $("hk-toggle"), create: $("hk-create"), destroy: $("hk-destroy"),
+  toggle: $("hk-toggle"), main: $("hk-main"), destroy: $("hk-destroy"),
+  aux1: $("hk-aux1"), aux2: $("hk-aux2"), aux3: $("hk-aux3"),
+  aux4: $("hk-aux4"), aux5: $("hk-aux5"),
 };
 let applying = false;
 
@@ -115,8 +117,11 @@ $("apply-hotkeys").addEventListener("click", async () => {
   try {
     const r = await wails.Call.ByName(NS + "ApplyHotkeys", {
       toggle: hk.toggle.value.trim(),
-      create: hk.create.value.trim(),
+      main: hk.main.value.trim(),
       destroy_current: hk.destroy.value.trim(),
+      aux1: hk.aux1.value.trim(), aux2: hk.aux2.value.trim(),
+      aux3: hk.aux3.value.trim(), aux4: hk.aux4.value.trim(),
+      aux5: hk.aux5.value.trim(),
     });
     if (r.error) {
       msg.textContent = r.error;
@@ -132,6 +137,36 @@ $("apply-hotkeys").addEventListener("click", async () => {
 });
 
 for (const el of Object.values(hk)) setupHotkeyCapture(el);
+
+/* ── 辅助便签颜色（input[type=color] 十六进制 ↔ RGB，改动实时生效）── */
+
+const auxInputs = [1, 2, 3, 4, 5].map((i) => $("aux-color-" + i));
+const defaultAuxHex = ["#5a7fa8", "#5e8656", "#8b6fa8", "#a0743a", "#3f8680"];
+
+function rgbToHex(c) {
+  const h = (v) => v.toString(16).padStart(2, "0");
+  return "#" + h(c.r) + h(c.g) + h(c.b);
+}
+function hexToRgb(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+async function applyAuxColors() {
+  const msg = $("aux-color-msg");
+  const colors = auxInputs.map((el) => hexToRgb(el.value));
+  if (colors.some((c) => c === null)) return;
+  try {
+    await wails.Call.ByName(NS + "ApplyAuxColors", colors);
+    msg.textContent = "已应用";
+    setTimeout(() => { if (msg.textContent === "已应用") msg.textContent = ""; }, 3000);
+  } catch (err) {
+    msg.textContent = "应用失败：" + err;
+  }
+}
+for (const el of auxInputs) el.addEventListener("input", applyAuxColors);
 
 /* ── 开机自启动（注册表 Run 键为事实来源，后端 GetAutoStart/SetAutoStart）── */
 
@@ -180,8 +215,17 @@ async function init() {
     fields.w.value = n.w ?? 240;
     fields.h.value = n.h ?? 220;
     hk.toggle.value = s.hotkeys?.toggle ?? "alt+n";
-    hk.create.value = s.hotkeys?.create ?? "alt+shift+c";
+    hk.main.value = s.hotkeys?.main ?? "alt+c";
     hk.destroy.value = s.hotkeys?.destroy_current ?? "alt+z";
+    hk.aux1.value = s.hotkeys?.aux1 ?? "alt+1";
+    hk.aux2.value = s.hotkeys?.aux2 ?? "alt+2";
+    hk.aux3.value = s.hotkeys?.aux3 ?? "alt+3";
+    hk.aux4.value = s.hotkeys?.aux4 ?? "alt+4";
+    hk.aux5.value = s.hotkeys?.aux5 ?? "alt+5";
+    const ac = s.aux_colors ?? [];
+    auxInputs.forEach((el, i) => {
+      el.value = ac[i] ? rgbToHex(ac[i]) : defaultAuxHex[i];
+    });
     try {
       autoSwitch.checked = await wails.Call.ByName(NS + "GetAutoStart");
     } catch {

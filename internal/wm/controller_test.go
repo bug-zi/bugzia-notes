@@ -1,6 +1,10 @@
 package wm
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"bugzia-notes/internal/model"
@@ -93,28 +97,11 @@ func (c *Controller) setPinnedForTest(id string, p bool) {
 	c.mu.Unlock()
 }
 
-func TestCreateCap50(t *testing.T) {
-	ctl, ops := newTestController(t)
-	for i := 0; i < model.MaxNotes; i++ {
-		ctl.CreateBlankNote()
-	}
-	if ctl.Count() != model.MaxNotes {
-		t.Fatalf("应能建满 %d 张: %d", model.MaxNotes, ctl.Count())
-	}
-	ctl.CreateBlankNote()
-	if ctl.Count() != model.MaxNotes {
-		t.Fatal("超上限不应再建")
-	}
-	if len(ops.notify) == 0 {
-		t.Fatal("超上限应触发提示")
-	}
-}
-
 func TestDestroyCurrentFallsBackToActiveThenLast(t *testing.T) {
 	ctl, ops := newTestController(t)
-	ctl.CreateBlankNote()
-	ctl.CreateBlankNote()
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
+	ctl.ToggleSlot(1)
+	ctl.ToggleSlot(2)
 	first := ctl.noteIDs()[0]
 	ctl.SetContent(first, "编辑过") // 编辑过 = 当前便签（bugzia 语义）
 	ctl.DestroyCurrent()
@@ -151,8 +138,8 @@ func TestToggleNotesCreatesWhenEmpty(t *testing.T) {
 
 func TestToggleNotesHideAndSummonPromotes(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.CreateBlankNote()
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
+	ctl.ToggleSlot(1)
 	id := ctl.noteIDs()[1]
 	ctl.setPinnedForTest(id, false) // 造一张未钉便签
 	ctl.ToggleNotes()               // 展开中（有 pinned 且可见）→ 全部隐藏
@@ -170,7 +157,7 @@ func TestToggleNotesHideAndSummonPromotes(t *testing.T) {
 
 func TestNoteGeometryUpdatesRecord(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 	id := ctl.noteIDs()[0]
 	ctl.NoteMoved(id, 111, 222)
 	ctl.NoteResized(id, 300, 260)
@@ -182,8 +169,8 @@ func TestNoteGeometryUpdatesRecord(t *testing.T) {
 
 func TestScheduleSavePersistsAllNotes(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.CreateBlankNote() // 新建即钉住
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0) // 新建即钉住
+	ctl.ToggleSlot(1)
 	ids := ctl.noteIDs()
 	ctl.setPinnedForTest(ids[1], false) // 第二张改为未钉
 	ctl.SetContent(ids[1], "未钉也持久化")
@@ -209,7 +196,7 @@ func TestScheduleSavePersistsAllNotes(t *testing.T) {
 
 func TestHydrateToFocusesNewBlankNote(t *testing.T) {
 	ctl, ops := newTestController(t)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 	id := ctl.noteIDs()[0]
 	ctl.HydrateTo(id)
 	if len(ops.focused) != 1 || ops.focused[0] != id {
@@ -223,10 +210,10 @@ func TestHydrateToFocusesNewBlankNote(t *testing.T) {
 
 func TestPackAvoidsLiveSiblingPositions(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.CreateBlankNote() // 第一张落在 (8,8)
+	ctl.ToggleSlot(0) // 第一张落在 (8,8)
 	a := ctl.noteIDs()[0]
 	ctl.NoteMoved(a, 8, 8)
-	ctl.CreateBlankNote() // 第二张应避让第一张
+	ctl.ToggleSlot(1) // 第二张应避让第一张
 	b := ctl.noteIDs()[1]
 	recs := ctl.AllRecords()
 	var bLive *NoteLive
@@ -251,8 +238,9 @@ func TestPackAvoidsNotePlacedAtNegativeCoords(t *testing.T) {
 	// 便签生效，与其是否独立样式无关。
 	existing := model.NewRecord("已有", 496, 618, true)
 	existing.X, existing.Y = -6, 0
+	existing.Slot = 1 // 占用辅助槽 1，让主槽空闲供新建
 	ctl, _ := newTestController(t, existing)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 
 	ids := ctl.noteIDs()
 	ctl.mu.Lock()
@@ -282,9 +270,9 @@ func seedPinnedNotes(t *testing.T, n int) string {
 	}
 	seed := NewController(newFakeOps(), st)
 	for i := 0; i < n; i++ {
-		seed.CreateBlankNote()
+		seed.ToggleSlot(i)
 	}
-	seed.scheduleSave() // CreateBlankNote 不落盘，显式快照
+	seed.scheduleSave() // ToggleSlot 不落盘，显式快照
 	st.Close()
 	return dir
 }
@@ -353,7 +341,7 @@ func TestImportRecordsKeepsNegativeCoords(t *testing.T) {
 
 func TestSetNoteStyleLockSnapshotsAndClears(t *testing.T) {
 	ctl, ops := newTestController(t)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 	id := ctl.noteIDs()[0]
 
 	if err := ctl.SetNoteStyleLock(id, true); err != nil {
@@ -382,7 +370,7 @@ func TestSetNoteStyleLockSnapshotsAndClears(t *testing.T) {
 
 func TestApplyNoteStyleForRequiresLock(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 	id := ctl.noteIDs()[0]
 	err := ctl.ApplyNoteStyleFor(id, model.NoteStyle{BgR: 1, BgG: 2, BgB: 3, BgAlpha: 0.5, Radius: 4, FontSize: 16})
 	if err == nil {
@@ -395,7 +383,7 @@ func TestApplyNoteStyleForRequiresLock(t *testing.T) {
 
 func TestApplyNoteStyleForClampsAndPersists(t *testing.T) {
 	ctl, ops := newTestController(t)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 	id := ctl.noteIDs()[0]
 	if err := ctl.SetNoteStyleLock(id, true); err != nil {
 		t.Fatal(err)
@@ -422,8 +410,8 @@ func TestApplyNoteStyleForClampsAndPersists(t *testing.T) {
 
 func TestApplySettingsExemptsLockedNote(t *testing.T) {
 	ctl, ops := newTestController(t)
-	ctl.CreateBlankNote()
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
+	ctl.ToggleSlot(1)
 	ids := ctl.noteIDs()
 	if err := ctl.SetNoteStyleLock(ids[0], true); err != nil {
 		t.Fatal(err)
@@ -437,18 +425,19 @@ func TestApplySettingsExemptsLockedNote(t *testing.T) {
 	newGlobal.Note.BgB = 139
 	ctl.ApplySettings(newGlobal)
 
-	// 广播顺序 = notes 列表顺序：第一张已锁定、第二张未锁定
+	// 广播顺序 = notes 列表顺序：第一张（主）已锁定、第二张（辅助）未锁定
 	if ops.hydratedStyles[0] != lockedBefore {
 		t.Fatalf("锁定便签广播应豁免（收到自身样式）: %+v", ops.hydratedStyles[0])
 	}
-	if ops.hydratedStyles[1].BgR != 94 {
-		t.Fatalf("未锁定便签应收到新全局样式: %+v", ops.hydratedStyles[1])
+	want := newGlobal.AuxColors[0] // 辅助便签背景恒为槽位色
+	if ops.hydratedStyles[1].BgR != want.R || ops.hydratedStyles[1].BgG != want.G || ops.hydratedStyles[1].BgB != want.B {
+		t.Fatalf("辅助便签广播应携带槽位色: %+v want %v", ops.hydratedStyles[1], want)
 	}
 }
 
 func TestDestroyNonEmptySavesToRecycle(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 	id := ctl.noteIDs()[0]
 	ctl.SetContent(id, "要找回的内容")
 	before := ctl.AllRecords()[0]
@@ -471,7 +460,7 @@ func TestDestroyNonEmptySavesToRecycle(t *testing.T) {
 
 func TestDestroyBlankNotSavesToRecycle(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 	id := ctl.noteIDs()[0]
 	ctl.SetContent(id, "   \n\t ")
 	ctl.ConfirmDestroy(id)
@@ -482,7 +471,7 @@ func TestDestroyBlankNotSavesToRecycle(t *testing.T) {
 
 func TestCancelConfirmNotSavesToRecycle(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.CreateBlankNote()
+	ctl.ToggleSlot(0)
 	id := ctl.noteIDs()[0]
 	ctl.SetContent(id, "内容")
 	ctl.RequestDestroy(id)
@@ -492,5 +481,185 @@ func TestCancelConfirmNotSavesToRecycle(t *testing.T) {
 	}
 	if !ctl.hasNote(id) {
 		t.Fatal("取消后便签应仍在")
+	}
+}
+
+func (c *Controller) recForTest(id string) (model.NoteRecord, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := c.findLocked(id); n != nil {
+		return n.rec, true
+	}
+	return model.NoteRecord{}, false
+}
+
+func (c *Controller) activeIDForTest() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.activeID
+}
+
+func TestToggleSlotCreatesPinnedAndActivates(t *testing.T) {
+	ctl, ops := newTestController(t)
+	ctl.ToggleSlot(2)
+	ids := ctl.noteIDs()
+	if len(ids) != 1 {
+		t.Fatalf("应创建 1 张: %v", ids)
+	}
+	rec, ok := ctl.recForTest(ids[0])
+	if !ok || rec.Slot != 2 || !rec.Pinned {
+		t.Fatalf("新槽位便签应即钉住且 Slot=2: %+v", rec)
+	}
+	if ctl.activeIDForTest() != ids[0] {
+		t.Fatal("新建应成为当前便签")
+	}
+	ctl.HydrateTo(ids[0]) // 模拟窗口 ready：注水后应聚焦
+	if len(ops.focused) != 1 || ops.focused[0] != ids[0] {
+		t.Fatalf("ready 后应聚焦: %v", ops.focused)
+	}
+}
+
+func TestToggleSlotHideShowCycle(t *testing.T) {
+	ctl, ops := newTestController(t)
+	ctl.ToggleSlot(1)
+	id := ctl.noteIDs()[0]
+	ctl.ToggleSlot(1) // 已显示 → 隐藏
+	if !ops.hidden[id] {
+		t.Fatal("第二次按键应隐藏")
+	}
+	ctl.ToggleSlot(1) // 隐藏 → 显示聚焦 + 成为当前便签
+	if ops.hidden[id] {
+		t.Fatal("第三次按键应显示")
+	}
+	if len(ops.focused) < 1 || ops.focused[len(ops.focused)-1] != id {
+		t.Fatal("召唤应聚焦")
+	}
+	if ctl.activeIDForTest() != id {
+		t.Fatal("召唤应成为当前便签")
+	}
+}
+
+func TestToggleSlotUniquePerSlot(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(3)
+	ctl.ToggleSlot(3)
+	ctl.ToggleSlot(3)
+	if ctl.Count() != 1 {
+		t.Fatalf("同槽位反复按键只应有 1 张: %d", ctl.Count())
+	}
+}
+
+func TestDestroyClearsSlotForRecreate(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(4)
+	old := ctl.noteIDs()[0]
+	ctl.ConfirmDestroy(old)
+	if ctl.hasNote(old) {
+		t.Fatal("销毁后槽位应清空")
+	}
+	ctl.ToggleSlot(4)
+	if ctl.Count() != 1 || ctl.hasNote(old) {
+		t.Fatal("同槽位应能重新创建新便签")
+	}
+}
+
+func TestStartRestoresMissingMain(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	aux := model.NewRecord("辅助", 240, 220, true)
+	aux.ID, aux.Slot, aux.UpdatedAt = "aux", 2, 1
+	data, err := json.Marshal(map[string]any{"version": 2, "notes": []model.NoteRecord{aux}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctl := NewController(newFakeOps(), st)
+	ctl.Start()
+	slots := map[int]bool{}
+	for _, id := range ctl.noteIDs() {
+		rec, _ := ctl.recForTest(id)
+		slots[rec.Slot] = true
+	}
+	if !slots[model.SlotMain] || !slots[2] || len(slots) != 2 {
+		t.Fatalf("主便签缺失应补建且辅助保留: %v", slots)
+	}
+}
+
+func TestStartHiddenPrebuildsMainHidden(t *testing.T) {
+	ops := newFakeOps()
+	st, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	ctl := NewController(ops, st)
+	ctl.StartHidden()
+	if ctl.Count() != 1 {
+		t.Fatalf("静默启动应预建主便签: %d", ctl.Count())
+	}
+	id := ctl.noteIDs()[0]
+	if !ops.hidden[id] {
+		t.Fatal("静默启动主便签应预建隐藏")
+	}
+	if rec, _ := ctl.recForTest(id); rec.Slot != model.SlotMain {
+		t.Fatalf("预建的应是主便签: %+v", rec)
+	}
+}
+
+func TestAuxNoteStyleLockRejected(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(1)
+	id := ctl.noteIDs()[0]
+	if err := ctl.SetNoteStyleLock(id, true); err == nil {
+		t.Fatal("辅助便签应拒绝样式锁")
+	}
+}
+
+func TestImportRecordsAssignsSlotsByRecency(t *testing.T) {
+	ctl, _ := newTestController(t)
+	var recs []model.NoteRecord
+	for i := 0; i < 8; i++ {
+		r := model.NewRecord(fmt.Sprintf("c%d", i), 240, 220, true)
+		r.ID = fmt.Sprintf("r%d", i)
+		r.UpdatedAt = int64(i + 1)
+		recs = append(recs, r)
+	}
+	if n := ctl.ImportRecords(recs); n != 6 {
+		t.Fatalf("超上限应只导入 6 条: %d", n)
+	}
+	if len(ctl.noteIDs()) != 6 {
+		t.Fatalf("应恰好 6 张: %v", ctl.noteIDs())
+	}
+	// 最新 → 槽位 0，次新 → 槽位 1……
+	for _, id := range ctl.noteIDs() {
+		rec, _ := ctl.recForTest(id)
+		want := fmt.Sprintf("r%d", 7-rec.Slot)
+		if rec.ID != want {
+			t.Fatalf("槽位 %d 应是 r%d（按更新时间新到旧）: got %s", rec.Slot, 7-rec.Slot, rec.ID)
+		}
+	}
+}
+
+func TestToggleSlotFillsSixSlots(t *testing.T) {
+	ctl, _ := newTestController(t)
+	for slot := 0; slot < model.MaxNotes; slot++ {
+		ctl.ToggleSlot(slot)
+	}
+	if ctl.Count() != model.MaxNotes {
+		t.Fatalf("应建满 %d 张: %d", model.MaxNotes, ctl.Count())
+	}
+	ctl.ToggleSlot(3) // 已显示 → 隐藏，不新建
+	if ctl.Count() != model.MaxNotes {
+		t.Fatal("重复按键不应新建")
+	}
+	ctl.ToggleSlot(9) // 越界忽略
+	if ctl.Count() != model.MaxNotes {
+		t.Fatal("越界槽位应忽略")
 	}
 }

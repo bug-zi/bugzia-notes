@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -95,36 +96,78 @@ func (c *Controller) Notify(title, body string) {
 	c.ops.Notify(title, body)
 }
 
-// Start 启动恢复：为所有已持久化便签重建窗口（全量持久化，含未钉）。
-func (c *Controller) Start() {
-	for _, rec := range c.store.LoadNotes() {
-		c.openRecord(rec, rec.X == model.SentinelCoord || rec.Y == model.SentinelCoord, false)
-	}
-}
+// Start 启动恢复：为所有已持久化便签重建窗口（全量持久化，含未钉）；
+// 主便签缺失（无 Slot=0 记录）自动补建——全新安装、主便签被销毁后重启、
+// 备份恢复缺主便签等场景统一覆盖（design §7.2）。
+func (c *Controller) Start() { c.startRestore(false) }
 
 // StartHidden 静默启动恢复：与 Start 同源，但预建隐藏窗口且 visible=false，
-// 首次集合切换走召唤分支直接 Show（召唤零延迟，spec §5.3）。
-func (c *Controller) StartHidden() {
+// 首次集合切换/槽位键走召唤分支直接 Show（召唤零延迟，spec §5.3）。
+func (c *Controller) StartHidden() { c.startRestore(true) }
+
+func (c *Controller) startRestore(hidden bool) {
+	hasMain := false
 	for _, rec := range c.store.LoadNotes() {
-		c.openRecord(rec, rec.X == model.SentinelCoord || rec.Y == model.SentinelCoord, true)
+		if rec.Slot == model.SlotMain {
+			hasMain = true
+		}
+		c.openRecord(rec, rec.X == model.SentinelCoord || rec.Y == model.SentinelCoord, hidden)
+	}
+	if !hasMain {
+		c.createSlotNote(model.SlotMain, hidden)
 	}
 }
 
-// ── 创建 ────────────────────────────────────────────────────────────────
+// ── 创建（槽位模型）────────────────────────────────────────────────────
 
-// CreateBlankNote 新建一张钉住空白便签（快捷键/托盘路径；新建即钉住保证
-// 可见可写——bugzia 踩坑结论），新建即成为「当前便签」。上限 50。
-func (c *Controller) CreateBlankNote() {
+// ToggleSlot 槽位便签三态切换（六键统一入口，docs/project/便签/2026-11-18-
+// slot-model-design.md §7.1）：槽位无便签→创建并显示聚焦成为当前便签；
+// 隐藏→显示聚焦；已显示→隐藏。slot 越界忽略。
+func (c *Controller) ToggleSlot(slot int) {
+	if slot < 0 || slot >= model.MaxNotes {
+		return
+	}
+	c.mu.Lock()
+	id := ""
+	visible := false
+	for _, n := range c.notes {
+		if n.rec.Slot == slot {
+			id = n.rec.ID
+			visible = c.visible[id]
+			break
+		}
+	}
+	c.mu.Unlock()
+	switch {
+	case id == "":
+		c.createSlotNote(slot, false)
+	case !visible:
+		c.showNote(id)
+		c.ops.FocusNote(id)
+		c.mu.Lock()
+		c.activeID = id // 召唤显示即成为当前便签
+		c.mu.Unlock()
+	default:
+		c.hideNote(id)
+	}
+}
+
+// createSlotNote 创建槽位便签（新建即钉住保证可见可写——bugzia 踩坑结论）。
+// hidden=true 仅静默启动预建主便签用（不聚焦，召唤路径再聚焦）。
+func (c *Controller) createSlotNote(slot int, hidden bool) {
 	if !c.canAdd() {
-		c.Notify("bugzia-notes", "便笺已达上限（50）")
+		c.Notify("bugzia-notes", "便笺已达上限（6）")
 		return
 	}
 	s := c.store.Settings().Note
 	rec := model.NewRecord("", s.W, s.H, true)
-	live := c.openRecord(rec, true, false)
+	rec.Slot = slot
+	live := c.openRecord(rec, true, hidden)
 	c.mu.Lock()
 	c.activeID = live.rec.ID
-	c.needsFocus[live.rec.ID] = true // 窗口 ready 注水后再聚焦
+	if !hidden {
+		c.needsFocus[live.rec.ID] = true // 窗口 ready 注水后再聚焦
+	}
 	c.mu.Unlock()
 }
 
@@ -211,7 +254,7 @@ func (c *Controller) HydrateTo(id string) {
 	if !exists {
 		return
 	}
-	c.ops.Hydrate(id, rec, EffectiveStyle(rec, c.store.Settings().Note))
+	c.ops.Hydrate(id, rec, EffectiveStyle(rec, c.store.Settings()))
 	if needFocus {
 		c.mu.Lock()
 		delete(c.needsFocus, id)
@@ -247,7 +290,7 @@ func (c *Controller) CancelEdit(id string) {
 	}
 	c.mu.Unlock()
 	if exists {
-		c.ops.Hydrate(id, rec, EffectiveStyle(rec, c.store.Settings().Note))
+		c.ops.Hydrate(id, rec, EffectiveStyle(rec, c.store.Settings()))
 	}
 }
 
@@ -317,12 +360,18 @@ func (c *Controller) TogglePinned(id string) {
 // rec.Style（此后独立，全局改动不再影响它）；解锁 = 清空（回跟随全局，
 // 立即跳到全局当前值）。均单窗重推 + 防抖落盘。
 func (c *Controller) SetNoteStyleLock(id string, locked bool) error {
-	global := c.store.Settings().Note
+	global := c.store.Settings()
 	c.mu.Lock()
 	n := c.findLocked(id)
 	if n == nil {
 		c.mu.Unlock()
 		return fmt.Errorf("便签不存在: %s", id)
+	}
+	if n.rec.Slot >= 1 {
+		// 辅助便签禁用样式锁：底色唯一来源 = 槽位色设置（纵深防御，
+		// 前端已隐藏入口，design §8）
+		c.mu.Unlock()
+		return fmt.Errorf("辅助便签底色由「辅助便签颜色」统一设置")
 	}
 	if locked {
 		snap := EffectiveStyle(n.rec, global)
@@ -348,6 +397,12 @@ func (c *Controller) ApplyNoteStyleFor(id string, style model.NoteStyle) error {
 		c.mu.Unlock()
 		return fmt.Errorf("便签不存在: %s", id)
 	}
+	if n.rec.Slot >= 1 {
+		// 辅助便签禁用样式锁：底色唯一来源 = 槽位色设置（纵深防御，
+		// 前端已隐藏入口，design §8）
+		c.mu.Unlock()
+		return fmt.Errorf("辅助便签底色由「辅助便签颜色」统一设置")
+	}
 	if n.rec.Style == nil {
 		c.mu.Unlock()
 		return fmt.Errorf("请先锁定样式再修改")
@@ -371,14 +426,14 @@ func (c *Controller) ApplyNoteStyleFor(id string, style model.NoteStyle) error {
 
 // ── 显隐（alt+n 语义）──────────────────────────────────────────────────
 
-// ToggleNotes 集合切换：无便签 → 新建钉住空白便签；有便签 → 显隐切换。
+// ToggleNotes 集合切换：无便签 → 召唤主便签；有便签 → 显隐切换。
 // 展开态只认「pinned 且可见」；召唤时把所有 unpinned 升级为 pinned
 //（沉底便签会被应用窗口盖住，不升级用户看不见——bugzia 踩坑结论）。
 func (c *Controller) ToggleNotes() {
 	c.mu.Lock()
 	if len(c.notes) == 0 {
 		c.mu.Unlock()
-		c.CreateBlankNote()
+		c.ToggleSlot(model.SlotMain)
 		return
 	}
 	visiblePinned := 0
@@ -561,18 +616,22 @@ func (c *Controller) ApplySettings(s model.Settings) {
 	c.mu.Unlock()
 	log.Printf("[settings] 推送样式到 %d 张便签", len(ids))
 	for i, id := range ids {
-		c.ops.Hydrate(id, recs[i], EffectiveStyle(recs[i], s.Note))
+		c.ops.Hydrate(id, recs[i], EffectiveStyle(recs[i], s))
 	}
 }
 
-// ImportRecords 导入记录：建窗 + 一次性落盘。返回实际导入条数（受上限约束）。
+// ImportRecords 导入记录：按更新时间新到旧分配槽位 0..5（最新→主便签，
+// 与 notes v1→v2 迁移同规则），超出 6 条丢弃。建窗 + 一次性落盘，返回实际导入条数。
 func (c *Controller) ImportRecords(recs []model.NoteRecord) int {
+	sorted := append([]model.NoteRecord(nil), recs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].UpdatedAt > sorted[j].UpdatedAt })
 	added := 0
-	for _, rec := range recs {
-		if !c.canAdd() {
-			c.Notify("bugzia-notes", "便笺已达上限（50），其余未导入")
+	for i, rec := range sorted {
+		if i >= model.MaxNotes {
+			c.Notify("bugzia-notes", "便笺已达上限（6），其余未导入")
 			break
 		}
+		rec.Slot = i
 		c.openRecord(rec, rec.X == model.SentinelCoord || rec.Y == model.SentinelCoord, false)
 		added++
 	}

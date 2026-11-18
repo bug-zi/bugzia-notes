@@ -49,6 +49,24 @@ func TestDownloadSizeMismatch(t *testing.T) {
 	}
 }
 
+func TestDownloadUnknownSize(t *testing.T) {
+	// atom 直链路径无声明尺寸：以响应 Content-Length 为准
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		_, _ = w.Write(make([]byte, 1000))
+	}))
+	defer ts.Close()
+	cfg := &Config{AssetName: "bugzia-notes.exe", Client: ts.Client()}
+	dest, err := Download(cfg, &Release{AssetURL: ts.URL, AssetSize: 0}, t.TempDir())
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || len(data) != 1000 {
+		t.Fatalf("成品内容错误: len=%d err=%v", len(data), err)
+	}
+}
+
 func TestDownloadTruncated(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// 声明 1000 只发 10（无 Content-Length，客户端按实收校验）

@@ -52,10 +52,10 @@ func main() {
 	}
 
 	// 更新器：GitHub Releases 检查 + 自更新
-	//（spec: docs/project/全局/2026-11-18-github-release-auto-update-design.md）
+	//（检查/下载走 releases.atom 与 latest/download 直链，不受 API 匿名配额限制；
+	// spec: docs/project/全局/2026-11-18-github-release-auto-update-design.md）
 	upd := &updater.Config{
-		RepoAPI:   "https://api.github.com/repos/bug-zi/bugzia-notes/releases/latest",
-		RepoPage:  "https://github.com/bug-zi/bugzia-notes/releases",
+		RepoBase:  "https://github.com/bug-zi/bugzia-notes",
 		AssetName: "bugzia-notes.exe",
 		DataDir:   dir,
 		Current:   settingsui.Version,
@@ -91,7 +91,7 @@ func main() {
 		}
 	}
 
-	initTray(app)
+	initTray(app, ctl)
 	wireNoteEvents(app, ctl)
 
 	// 自启动条目自愈：exe 被挪动后把 Run 值整串重写为当前路径
@@ -147,10 +147,20 @@ func dispatchHotkey(ctl *wm.Controller, id int) {
 	switch id {
 	case hotkey.IDToggle:
 		ctl.ToggleNotes()
-	case hotkey.IDCreate:
-		ctl.CreateBlankNote()
+	case hotkey.IDMain:
+		ctl.ToggleSlot(model.SlotMain)
 	case hotkey.IDKill:
 		ctl.DestroyCurrent()
+	case hotkey.IDAux1:
+		ctl.ToggleSlot(1)
+	case hotkey.IDAux2:
+		ctl.ToggleSlot(2)
+	case hotkey.IDAux3:
+		ctl.ToggleSlot(3)
+	case hotkey.IDAux4:
+		ctl.ToggleSlot(4)
+	case hotkey.IDAux5:
+		ctl.ToggleSlot(5)
 	}
 }
 
@@ -169,7 +179,7 @@ func rebindHotkeys(mgr *hotkey.Manager, hs model.HotkeySettings, ctl *wm.Control
 	}
 }
 
-func initTray(app *application.App) {
+func initTray(app *application.App, ctl *wm.Controller) {
 	tray := app.SystemTray.New()
 	menu := application.NewMenu()
 	mk := func(label string, fn func()) *application.MenuItem {
@@ -179,6 +189,7 @@ func initTray(app *application.App) {
 		})
 		return item
 	}
+	_ = mk("召唤主便签", func() { ctl.ToggleSlot(model.SlotMain) })
 	_ = mk("回收站", func() { openTrash(app) })
 	_ = mk("设置", func() { openSettings(app) })
 	menu.AddSeparator()
@@ -360,8 +371,8 @@ func updateFlow(upd *updater.Config, app *application.App, manual bool) map[stri
 func promptUpdate(app *application.App, upd *updater.Config, rel *updater.Release) {
 	dlg := app.Dialog.Question()
 	dlg.SetTitle("发现新版本 " + rel.Tag)
-	dlg.Message = fmt.Sprintf("最新版 %s，当前 %s。\n\n%s\n\n更新将重启应用，未钉住的临时便签会消失。",
-		rel.Tag, upd.Current, rel.Notes)
+	dlg.Message = fmt.Sprintf("最新版 %s，当前 %s。\n\n更新将重启应用，未钉住的临时便签会消失。",
+		rel.Tag, upd.Current)
 	yes := dlg.AddButton("更新")
 	yes.SetAsDefault()
 	yes.OnClick(func() { go applyUpdate(app, upd, rel) })
@@ -387,7 +398,7 @@ func applyUpdate(app *application.App, upd *updater.Config, rel *updater.Release
 		retry.SetAsDefault()
 		retry.OnClick(func() { go applyUpdate(app, upd, rel) })
 		open := dlg.AddButton("打开发布页")
-		open.OnClick(func() { _ = app.Browser.OpenURL(upd.RepoPage) })
+		open.OnClick(func() { _ = app.Browser.OpenURL(upd.ReleasesPage()) })
 		dlg.AddButton("取消").SetAsCancel()
 		dlg.Show()
 		return
@@ -492,6 +503,7 @@ func (o *wailsOps) Hydrate(id string, rec model.NoteRecord, style model.NoteStyl
 		"id":      id,
 		"content": rec.Content,
 		"pinned":  rec.Pinned,
+		"slot":    rec.Slot,
 		"style":   style,
 		"locked":  rec.Style != nil,
 	})

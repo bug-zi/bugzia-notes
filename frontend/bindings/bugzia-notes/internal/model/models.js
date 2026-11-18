@@ -7,7 +7,8 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
- * HotkeySettings 三条全局快捷键的键位描述（"alt+n" 形式）。
+ * HotkeySettings 八条全局快捷键的键位描述（"alt+n" 形式）。
+ * Create 为 v1 遗留字段：settings.json v1→v2 升级时继承给 Main，此后不再读写。
  */
 export class HotkeySettings {
     /**
@@ -25,11 +26,19 @@ export class HotkeySettings {
         }
         if (!("create" in $$source)) {
             /**
-             * 直接新建
+             * v1 遗留（升级时→Main）
              * @member
              * @type {string}
              */
             this["create"] = "";
+        }
+        if (!("main" in $$source)) {
+            /**
+             * 主便签召唤
+             * @member
+             * @type {string}
+             */
+            this["main"] = "";
         }
         if (!("destroy_current" in $$source)) {
             /**
@@ -38,6 +47,42 @@ export class HotkeySettings {
              * @type {string}
              */
             this["destroy_current"] = "";
+        }
+        if (!("aux1" in $$source)) {
+            /**
+             * 辅助便签 1~5
+             * @member
+             * @type {string}
+             */
+            this["aux1"] = "";
+        }
+        if (!("aux2" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["aux2"] = "";
+        }
+        if (!("aux3" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["aux3"] = "";
+        }
+        if (!("aux4" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["aux4"] = "";
+        }
+        if (!("aux5" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["aux5"] = "";
         }
 
         Object.assign(this, $$source);
@@ -51,6 +96,51 @@ export class HotkeySettings {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new HotkeySettings(/** @type {Partial<HotkeySettings>} */($$parsedSource));
+    }
+}
+
+/**
+ * NoteColor 槽位色（辅助便签底色，设置窗口可改）。
+ */
+export class NoteColor {
+    /**
+     * Creates a new NoteColor instance.
+     * @param {Partial<NoteColor>} [$$source = {}] - The source object to create the NoteColor.
+     */
+    constructor($$source = {}) {
+        if (!("r" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["r"] = 0;
+        }
+        if (!("g" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["g"] = 0;
+        }
+        if (!("b" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["b"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new NoteColor instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {NoteColor}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new NoteColor(/** @type {Partial<NoteColor>} */($$parsedSource));
     }
 }
 
@@ -285,6 +375,14 @@ export class Settings {
              */
             this["hotkeys"] = (new HotkeySettings());
         }
+        if (!("aux_colors" in $$source)) {
+            /**
+             * 辅助便签 1~5 底色
+             * @member
+             * @type {NoteColor[]}
+             */
+            this["aux_colors"] = Array.from({ length: 5 }, () => (new NoteColor()));
+        }
 
         Object.assign(this, $$source);
     }
@@ -297,12 +395,16 @@ export class Settings {
     static createFrom($$source = {}) {
         const $$createField0_0 = $$createType0;
         const $$createField1_0 = $$createType1;
+        const $$createField2_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("note" in $$parsedSource) {
             $$parsedSource["note"] = $$createField0_0($$parsedSource["note"]);
         }
         if ("hotkeys" in $$parsedSource) {
             $$parsedSource["hotkeys"] = $$createField1_0($$parsedSource["hotkeys"]);
+        }
+        if ("aux_colors" in $$parsedSource) {
+            $$parsedSource["aux_colors"] = $$createField2_0($$parsedSource["aux_colors"]);
         }
         return new Settings(/** @type {Partial<Settings>} */($$parsedSource));
     }
@@ -311,3 +413,5 @@ export class Settings {
 // Private type creation functions
 const $$createType0 = NoteSettings.createFrom;
 const $$createType1 = HotkeySettings.createFrom;
+const $$createType2 = NoteColor.createFrom;
+const $$createType3 = $Create.Array($$createType2);

@@ -95,9 +95,9 @@ func ImportBugziaSettings(path string) (BugziaConfig, error) {
 		return t
 	}
 	out.Hotkeys.Toggle = adopt("集合切换", f.Hotkey.Note)
-	out.Hotkeys.Create = adopt("直接新建", f.Hotkey.NoteCreate)
+	out.Hotkeys.Main = adopt("主便签", f.Hotkey.NoteCreate)
 	out.Hotkeys.DestroyCurrent = adopt("销毁当前", f.Hotkey.NoteDestroy)
-	out.HasHotkeys = out.Hotkeys.Toggle != "" || out.Hotkeys.Create != "" ||
+	out.HasHotkeys = out.Hotkeys.Toggle != "" || out.Hotkeys.Main != "" ||
 		out.Hotkeys.DestroyCurrent != ""
 	return out, nil
 }

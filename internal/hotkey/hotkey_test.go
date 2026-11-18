@@ -44,24 +44,47 @@ func TestFormatComboRoundTrip(t *testing.T) {
 	}
 }
 
-func TestParseAllDetectsDuplicate(t *testing.T) {
-	_, err := ParseAll(model.HotkeySettings{
-		Toggle: "alt+n", Create: "alt+n", DestroyCurrent: "alt+z",
-	})
-	if err == nil {
-		t.Fatal("重复键位应报错")
-	}
+func TestParseAllEightKeys(t *testing.T) {
 	binds, err := ParseAll(model.DefaultSettings().Hotkeys)
-	if err != nil || len(binds) != 3 {
-		t.Fatalf("默认键位应解析成功: %v %v", binds, err)
+	if err != nil {
+		t.Fatalf("默认八键应解析成功: %v", err)
+	}
+	if len(binds) != 8 {
+		t.Fatalf("应注册 8 键: %d", len(binds))
+	}
+	for _, id := range []int{IDToggle, IDMain, IDKill, IDAux1, IDAux2, IDAux3, IDAux4, IDAux5} {
+		if _, ok := binds[id]; !ok {
+			t.Fatalf("id %d 缺失", id)
+		}
+	}
+}
+
+func TestParseAllDetectsDuplicateAcrossAux(t *testing.T) {
+	h := model.DefaultSettings().Hotkeys
+	h.Aux3 = h.Toggle // 与集合切换撞键
+	if _, err := ParseAll(h); err == nil {
+		t.Fatal("跨组重复键位应报错")
 	}
 }
 
 func TestParseAllEmptyMeansDisabled(t *testing.T) {
-	binds, err := ParseAll(model.HotkeySettings{
-		Toggle: "alt+n", Create: "", DestroyCurrent: "alt+z",
-	})
+	h := model.DefaultSettings().Hotkeys
+	h.Main, h.Aux1, h.Aux2, h.Aux3, h.Aux4, h.Aux5 = "", "", "", "", "", ""
+	binds, err := ParseAll(h)
 	if err != nil || len(binds) != 2 {
 		t.Fatalf("留空应等于禁用（不注册）: %v %v", binds, err)
+	}
+}
+
+func TestLabelCoversEightKeys(t *testing.T) {
+	want := map[int]string{
+		IDToggle: "集合切换", IDMain: "主便签", IDKill: "销毁当前",
+		IDAux1: "辅助便签 1", IDAux2: "辅助便签 2", IDAux3: "辅助便签 3",
+		IDAux4: "辅助便签 4", IDAux5: "辅助便签 5",
+	}
+	for id, w := range want {
+		if got := Label(id); got != w {
+			t.Fatalf("Label(%d) = %q, want %q", id, got, w)
+		}
 	}
 }

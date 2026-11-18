@@ -16,6 +16,16 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as model$0 from "../model/models.js";
 
 /**
+ * ApplyAuxColors 写入辅助便签五色（值域 clamp）：实时生效（全体便签重推，
+ * 辅助便签背景按槽位色重算）并落盘。
+ * @param {model$0.NoteColor[]} colors
+ * @returns {$CancellablePromise<void>}
+ */
+export function ApplyAuxColors(colors) {
+    return $Call.ByID(649315268, colors);
+}
+
+/**
  * ApplyHotkeys 解析三条键位并重绑（留空=禁用）。逐键注册：被系统/其他
  * 程序占用的键跳过并在 conflicts 中报告（其余照常生效）。成功后落盘。
  * 返回 {conflicts: ["集合切换(alt+z)"...], error?}。

@@ -1162,11 +1162,12 @@ document.getElementById("check-update").addEventListener("click", async () => {
 
 - [ ] **Step 1: 开发者确认发布演练**（须明确指令「发布 v1.1.0」）
 - [ ] **Step 2: AI 执行发布流程（spec §7）**：
-  1. 改 `internal/settingsui/service.go:19` `const Version = "v1.1.0"`
-  2. `go build -ldflags="-H windowsgui" -o bugzia-notes.exe .`
-  3. `go build ./... && go vet ./... && go test ./...` 全绿
-  4. 起草 release notes（由当期开发日志整理：数据目录迁移至项目内、回收站、更新功能等），给开发者过目
-  5. `gh release create v1.1.0 bugzia-notes.exe --title "v1.1.0" --notes "<已确认的说明>"`
+  1. 改 `internal/settingsui/service.go:19` `const Version = "vX.Y.Z"`
+  2. 备份旧稳定版：根目录 exe 复制为 `bugzia-notes.exe.bak`（仅当 `.bak` 尚不存在）
+  3. `go build -ldflags="-H windowsgui" -o bugzia-notes.exe .`
+  4. `go build ./... && go vet ./... && go test ./...` 全绿
+  5. 起草 release notes（由当期开发日志整理），给开发者过目
+  6. `gh release create vX.Y.Z bugzia-notes.exe --title "vX.Y.Z" --notes "<已确认的说明>"`
 - [ ] **Step 3: 手测闸口（全部通过才算交付，逐项记录结果进日志）**：
   1. 等待 24h 节流过期或临时删 `data/update_state.json` → 重启应用（用刚发布的 v1.1.0 exe）→ 5s 后**不再弹框**（已是最新）；把本地版本号临时改回 v1.0.0 重跑一次 → 弹「发现新版本 v1.1.0」
   2. 点「更新」→ 应用退出 → 约 2s 后自动重启 → 设置窗口版本显示 v1.1.0 → exe 旁存在 `bugzia-notes.exe.bak`

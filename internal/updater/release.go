@@ -1,55 +1,57 @@
 package updater
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 )
 
-// Release releases/latest 中与本应用相关的信息。
+// Release releases 源中与本应用相关的信息。
 type Release struct {
-	Tag       string // tag_name，如 "v1.1.0"
-	Notes     string // release body（更新说明）
-	AssetURL  string // 目标资产下载地址
-	AssetSize int64  // 目标资产字节数
+	Tag       string // 最新发布 tag，如 "v2.0.0"
+	AssetURL  string // 资产下载直链（latest/download 确定式 URL）
+	AssetSize int64  // 声明尺寸；atom 路径拿不到，为 0（下载时以响应 Content-Length 为准）
 }
 
-// latestResponse GitHub API 响应中取用字段（其余忽略）。
-type latestResponse struct {
-	TagName string  `json:"tag_name"`
-	Body    string  `json:"body"`
-	Assets  []asset `json:"assets"`
-}
-
-type asset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-	Size               int64  `json:"size"`
-}
-
-// Latest 查询最新发布。资产缺失/状态非 200/坏 JSON 一律报错。
+// Latest 从 releases.atom 取最新发布 tag（该端点不受 GitHub API 匿名配额
+// 限制——api.github.com 在共享代理出口 IP 下 60 次/小时极易 403，教训见
+// 2026-11-18 全链路实测）。下载走 latest/download 确定式直链。
 func Latest(c *Config) (*Release, error) {
-	req, err := http.NewRequest(http.MethodGet, c.RepoAPI, nil)
+	resp, err := c.httpClient().Get(c.RepoBase + "/releases.atom")
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("请求 GitHub API 失败: %w", err)
+		return nil, fmt.Errorf("请求 releases.atom 失败: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API 状态 %d", resp.StatusCode)
+		return nil, fmt.Errorf("releases.atom 状态 %d", resp.StatusCode)
 	}
-	var lr latestResponse
-	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-		return nil, fmt.Errorf("解析 GitHub 响应失败: %w", err)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取 releases.atom 失败: %w", err)
 	}
-	for _, a := range lr.Assets {
-		if a.Name == c.AssetName {
-			return &Release{Tag: lr.TagName, Notes: lr.Body, AssetURL: a.BrowserDownloadURL, AssetSize: a.Size}, nil
-		}
+	tag, err := firstReleaseTag(string(data))
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("最新发布缺少资产 %s（发布流程异常）", c.AssetName)
+	return &Release{Tag: tag, AssetURL: c.latestDownloadURL()}, nil
+}
+
+// firstReleaseTag 取 feed 中第一条（最新）entry 的 /releases/tag/ 链接尾段。
+func firstReleaseTag(feed string) (string, error) {
+	const marker = `/releases/tag/`
+	i := strings.Index(feed, marker)
+	if i < 0 {
+		return "", fmt.Errorf("releases.atom 中没有发布条目")
+	}
+	rest := feed[i+len(marker):]
+	end := strings.IndexAny(rest, "\"'<")
+	if end < 0 {
+		return "", fmt.Errorf("releases.atom 条目格式异常")
+	}
+	tag := strings.TrimSpace(rest[:end])
+	if tag == "" {
+		return "", fmt.Errorf("releases.atom 条目 tag 为空")
+	}
+	return tag, nil
 }

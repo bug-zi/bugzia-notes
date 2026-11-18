@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	// MaxNotes 便签上限（与 bugzia 一致）。
-	MaxNotes = 50
+	// MaxNotes 槽位上限：1 主 + 5 辅（2026-11-18 槽位模型，全面取代自由列表）。
+	MaxNotes = 6
+	// SlotMain 主便签槽位；辅助便签 = 1..MaxNotes-1。
+	SlotMain = 0
 	// MinW / MinH 便签窗口最小逻辑尺寸（与 bugzia MIN_W/MIN_H 一致）。
 	MinW = 160
 	MinH = 120
@@ -31,6 +33,7 @@ type NoteRecord struct {
 	W         int        `json:"w"`
 	H         int        `json:"h"`
 	Pinned    bool       `json:"pinned"`
+	Slot      int        `json:"slot"` // 0=主便签（SlotMain），1~5=辅助便签
 	CreatedAt int64      `json:"created_at"`
 	UpdatedAt int64      `json:"updated_at"`
 	Style     *NoteStyle `json:"style"`
@@ -55,6 +58,13 @@ type RecycleEntry struct {
 	DeletedAt int64  `json:"deleted_at"` // 毫秒时间戳，排序键
 }
 
+// NoteColor 槽位色（辅助便签底色，设置窗口可改）。
+type NoteColor struct {
+	R int `json:"r"`
+	G int `json:"g"`
+	B int `json:"b"`
+}
+
 // NoteSettings 便签样式默认值。文字颜色固定白色，不提供设置。
 type NoteSettings struct {
 	BgR      int     `json:"bg_r"`
@@ -67,20 +77,28 @@ type NoteSettings struct {
 	BgAlpha  float64 `json:"bg_alpha"`
 }
 
-// HotkeySettings 三条全局快捷键的键位描述（"alt+n" 形式）。
+// HotkeySettings 八条全局快捷键的键位描述（"alt+n" 形式）。
+// Create 为 v1 遗留字段：settings.json v1→v2 升级时继承给 Main，此后不再读写。
 type HotkeySettings struct {
 	Toggle         string `json:"toggle"`          // 集合切换
-	Create         string `json:"create"`          // 直接新建
+	Create         string `json:"create"`          // v1 遗留（升级时→Main）
+	Main           string `json:"main"`            // 主便签召唤
 	DestroyCurrent string `json:"destroy_current"` // 销毁当前
+	Aux1           string `json:"aux1"`            // 辅助便签 1~5
+	Aux2           string `json:"aux2"`
+	Aux3           string `json:"aux3"`
+	Aux4           string `json:"aux4"`
+	Aux5           string `json:"aux5"`
 }
 
 // Settings settings.json 的内存形状。
 type Settings struct {
-	Note    NoteSettings   `json:"note"`
-	Hotkeys HotkeySettings `json:"hotkeys"`
+	Note      NoteSettings   `json:"note"`
+	Hotkeys   HotkeySettings `json:"hotkeys"`
+	AuxColors [5]NoteColor   `json:"aux_colors"` // 辅助便签 1~5 底色
 }
 
-// DefaultSettings 返回默认设置（= bugzia DEFAULT_NOTE + bugzia 默认键位）。
+// DefaultSettings 返回默认设置（= bugzia DEFAULT_NOTE + 槽位模型默认键位）。
 func DefaultSettings() Settings {
 	return Settings{
 		Note: NoteSettings{
@@ -90,8 +108,21 @@ func DefaultSettings() Settings {
 			BgAlpha: 0.9, // 文字固定白色，无透明度设置
 		},
 		Hotkeys: HotkeySettings{
-			Toggle: "alt+n", Create: "alt+shift+c", DestroyCurrent: "alt+z",
+			Toggle: "alt+n", Main: "alt+c", DestroyCurrent: "alt+z",
+			Aux1: "alt+1", Aux2: "alt+2", Aux3: "alt+3", Aux4: "alt+4", Aux5: "alt+5",
 		},
+		AuxColors: DefaultAuxColors(),
+	}
+}
+
+// DefaultAuxColors 默认辅助五色（与玫红 #C95877 同源柔和系，白字可读已校准）。
+func DefaultAuxColors() [5]NoteColor {
+	return [5]NoteColor{
+		{R: 90, G: 127, B: 168},  // #5A7FA8 雾蓝
+		{R: 94, G: 134, B: 86},   // #5E8656 苔绿
+		{R: 139, G: 111, B: 168}, // #8B6FA8 藤紫
+		{R: 160, G: 116, B: 58},  // #A0743A 琥珀
+		{R: 63, G: 134, B: 128},  // #3F8680 青灰
 	}
 }
 
