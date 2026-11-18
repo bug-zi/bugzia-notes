@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"embed"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -23,6 +24,7 @@ import (
 	"bugzia-notes/internal/model"
 	"bugzia-notes/internal/settingsui"
 	"bugzia-notes/internal/store"
+	"bugzia-notes/internal/updater"
 	"bugzia-notes/internal/winutil"
 	"bugzia-notes/internal/wm"
 )
@@ -49,6 +51,16 @@ func main() {
 		application.InvokeAsync(func() { dispatchHotkey(ctl, id) })
 	}
 
+	// 更新器：GitHub Releases 检查 + 自更新
+	//（spec: docs/project/全局/2026-11-18-github-release-auto-update-design.md）
+	upd := &updater.Config{
+		RepoAPI:   "https://api.github.com/repos/bug-zi/bugzia-notes/releases/latest",
+		RepoPage:  "https://github.com/bug-zi/bugzia-notes/releases",
+		AssetName: "bugzia-notes.exe",
+		DataDir:   dir,
+		Current:   settingsui.Version,
+	}
+
 	svc := settingsui.NewService(st, ctl, hotkeyMgr, hotkeyFire)
 
 	app := application.New(application.Options{
@@ -66,6 +78,7 @@ func main() {
 		},
 	})
 	ops.app = app
+	svc.SetUpdateCheck(func(manual bool) map[string]any { return updateFlow(upd, app, manual) })
 
 	// 首次运行（本应用尚无 settings.json）自动迁移 bugzia 配置
 	//（便签样式默认 + 便签三键；summon 属输入条不迁移）
@@ -78,7 +91,7 @@ func main() {
 		}
 	}
 
-	initTray(app, ctl)
+	initTray(app)
 	wireNoteEvents(app, ctl)
 
 	// 自启动条目自愈：exe 被挪动后把 Run 值整串重写为当前路径
@@ -99,6 +112,16 @@ func main() {
 	} else {
 		go ctl.Start()
 	}
+
+	// 后台检查更新：延迟 5s 等主循环就绪；启动前清理上次更新中断的残留
+	//（弹框 Show 内部 InvokeSync，goroutine 调用安全）
+	go func() {
+		time.Sleep(5 * time.Second)
+		if d := updater.ExeDir(); d != "" {
+			updater.CleanupStale(d)
+		}
+		updateFlow(upd, app, false)
+	}()
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
@@ -146,7 +169,7 @@ func rebindHotkeys(mgr *hotkey.Manager, hs model.HotkeySettings, ctl *wm.Control
 	}
 }
 
-func initTray(app *application.App, ctl *wm.Controller) {
+func initTray(app *application.App) {
 	tray := app.SystemTray.New()
 	menu := application.NewMenu()
 	mk := func(label string, fn func()) *application.MenuItem {
@@ -156,9 +179,7 @@ func initTray(app *application.App, ctl *wm.Controller) {
 		})
 		return item
 	}
-	_ = mk("新建便签", func() { ctl.CreateBlankNote() })
-	_ = mk("显示全部", func() { ctl.ShowAll() })
-	_ = mk("隐藏全部", func() { ctl.HideAll() })
+	_ = mk("回收站", func() { openTrash(app) })
 	_ = mk("设置", func() { openSettings(app) })
 	menu.AddSeparator()
 	quitBtn := menu.Add("退出")
@@ -179,6 +200,23 @@ func openSettings(app *application.App) {
 		URL:             "/",
 		Width:           480,
 		Height:          720,
+		DevToolsEnabled: true,
+	})
+}
+
+// openTrash 打开回收站窗口（单例，窗体参数对齐设置窗口）。
+func openTrash(app *application.App) {
+	if win := lookupWindow(app, "trash"); win != nil {
+		win.Show()
+		win.Focus()
+		return
+	}
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:            "trash",
+		Title:           "bugzia-notes 回收站",
+		URL:             "/trash.html",
+		Width:           420,
+		Height:          520,
 		DevToolsEnabled: true,
 	})
 }
@@ -283,6 +321,91 @@ func evStr(m map[string]any, key string) string {
 	}
 	s, _ := m[key].(string)
 	return s
+}
+
+// updateFlow 更新检查主流程（spec §5 状态机）。manual=false 时除「有新版弹框」
+// 外一律静默（网络失败/已是最新只记日志），manual=true 每个终点都有明确反馈。
+func updateFlow(upd *updater.Config, app *application.App, manual bool) map[string]any {
+	if !manual && !updater.ShouldCheck(upd.DataDir) {
+		return map[string]any{"status": "skipped"}
+	}
+	updater.MarkChecked(upd.DataDir)
+	rel, err := updater.Latest(upd)
+	if err != nil {
+		if manual {
+			return map[string]any{"status": "error", "error": err.Error()}
+		}
+		log.Println("[update] 检查失败:", err)
+		return map[string]any{"status": "error", "error": err.Error()}
+	}
+	newer, err := updater.IsNewer(rel.Tag, upd.Current)
+	if err != nil {
+		if manual {
+			return map[string]any{"status": "error", "error": err.Error()}
+		}
+		log.Println("[update] 版本比较失败:", err)
+		return map[string]any{"status": "error", "error": err.Error()}
+	}
+	if !newer {
+		if manual {
+			return map[string]any{"status": "latest"}
+		}
+		return map[string]any{"status": "latest"}
+	}
+	promptUpdate(app, upd, rel)
+	return map[string]any{"status": "has_update", "version": rel.Tag}
+}
+
+// promptUpdate 弹「更新 / 跳过」确认框；文案含未钉便签警示（spec §5）。
+func promptUpdate(app *application.App, upd *updater.Config, rel *updater.Release) {
+	dlg := app.Dialog.Question()
+	dlg.SetTitle("发现新版本 " + rel.Tag)
+	dlg.Message = fmt.Sprintf("最新版 %s，当前 %s。\n\n%s\n\n更新将重启应用，未钉住的临时便签会消失。",
+		rel.Tag, upd.Current, rel.Notes)
+	yes := dlg.AddButton("更新")
+	yes.SetAsDefault()
+	yes.OnClick(func() { go applyUpdate(app, upd, rel) })
+	dlg.AddButton("跳过").SetAsCancel()
+	dlg.Show()
+}
+
+// applyUpdate 下载新 exe → 写替换脚本并启动分离进程 → 退出应用。
+// 下载失败给警告框（重试/打开发布页/取消）。
+func applyUpdate(app *application.App, upd *updater.Config, rel *updater.Release) {
+	exe, err := os.Executable()
+	if err != nil {
+		updateFailDialog(app, "获取程序路径失败: "+err.Error())
+		return
+	}
+	updatePath, err := updater.Download(upd, rel, filepath.Dir(exe))
+	if err != nil {
+		log.Println("[update] 下载失败:", err)
+		dlg := app.Dialog.Warning()
+		dlg.SetTitle("更新下载失败")
+		dlg.Message = err.Error()
+		retry := dlg.AddButton("重试")
+		retry.SetAsDefault()
+		retry.OnClick(func() { go applyUpdate(app, upd, rel) })
+		open := dlg.AddButton("打开发布页")
+		open.OnClick(func() { _ = app.Browser.OpenURL(upd.RepoPage) })
+		dlg.AddButton("取消").SetAsCancel()
+		dlg.Show()
+		return
+	}
+	if err := updater.Apply(exe, updatePath); err != nil {
+		updateFailDialog(app, "启动更新脚本失败: "+err.Error())
+		return
+	}
+	log.Printf("[update] 新版 %s 已就位，应用退出并替换", rel.Tag)
+	app.Quit()
+}
+
+func updateFailDialog(app *application.App, msg string) {
+	dlg := app.Dialog.Error()
+	dlg.SetTitle("更新失败")
+	dlg.Message = msg + "（当前版本不受影响，可继续使用）"
+	dlg.AddButton("确定").SetAsDefault()
+	dlg.Show()
 }
 
 // ── wailsOps：WindowOps 的 Wails 实现 ──────────────────────────────────

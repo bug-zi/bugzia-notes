@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -395,10 +396,7 @@ func (c *Controller) ToggleNotes() {
 	c.summonAll()
 }
 
-// ShowAll 托盘「显示全部」= 召唤语义（含未钉升级，保证可见）。
-func (c *Controller) ShowAll() { c.summonAll() }
-
-// HideAll 托盘「隐藏全部」。
+// HideAll 隐藏全部便签窗口（托盘入口已移除，ToggleNotes 隐藏分支仍用）。
 func (c *Controller) HideAll() { c.hideAll() }
 
 func (c *Controller) hideAll() {
@@ -506,7 +504,7 @@ func (c *Controller) CancelConfirm(id string) {
 	c.mu.Unlock()
 }
 
-// ConfirmDestroy 前端确认（Y）后真正销毁。
+// ConfirmDestroy 前端确认（Y）后真正销毁；非空内容自动入回收站。
 func (c *Controller) ConfirmDestroy(id string) {
 	c.mu.Lock()
 	n := c.findLocked(id)
@@ -514,6 +512,7 @@ func (c *Controller) ConfirmDestroy(id string) {
 		c.mu.Unlock()
 		return
 	}
+	rec := n.rec
 	delete(c.confirming, id)
 	c.notes = removeNote(c.notes, id)
 	delete(c.visible, id)
@@ -524,6 +523,15 @@ func (c *Controller) ConfirmDestroy(id string) {
 
 	c.ops.CloseNote(id)
 	c.scheduleSave()
+	if strings.TrimSpace(rec.Content) != "" {
+		c.store.AddRecycleEntry(model.RecycleEntry{
+			ID:        rec.ID,
+			Content:   rec.Content,
+			CreatedAt: rec.CreatedAt,
+			UpdatedAt: rec.UpdatedAt,
+			DeletedAt: time.Now().UnixMilli(),
+		})
+	}
 }
 
 func removeNote(ns []*NoteLive, id string) []*NoteLive {

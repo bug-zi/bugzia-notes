@@ -48,6 +48,16 @@ export function ApplyNoteStyleFor(id, style) {
 }
 
 /**
+ * CheckUpdate 手动检查更新（设置窗口按钮）：跳过 24h 节流，每个终点都有反馈。
+ * @returns {$CancellablePromise<{ [_ in string]?: any }>}
+ */
+export function CheckUpdate() {
+    return $Call.ByID(1035314055).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * GetAutoStart 读开机自启动状态（注册表 Run 键为事实来源）。
  * 读失败按未启用处理并记日志（开关仍可写，写入成功即恢复一致）。
  * @returns {$CancellablePromise<boolean>}
@@ -63,6 +73,16 @@ export function GetAutoStart() {
 export function GetSettings() {
     return $Call.ByID(51355327).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
+    }));
+}
+
+/**
+ * ListRecycle 回收站条目快照（新到旧），回收站窗口经 Call.ByName 调用。
+ * @returns {$CancellablePromise<model$0.RecycleEntry[]>}
+ */
+export function ListRecycle() {
+    return $Call.ByID(3056832839).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
     }));
 }
 
@@ -99,6 +119,15 @@ export function SetNoteStyleLock(id, locked) {
 }
 
 /**
+ * SetUpdateCheck 注入更新检查回调（main 在 app 构建后设置；nil 时手动检查报未就绪）。
+ * @param {any} fn
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetUpdateCheck(fn) {
+    return $Call.ByID(2476722609, fn);
+}
+
+/**
  * Version 返回应用版本。
  * @returns {$CancellablePromise<string>}
  */
@@ -109,3 +138,5 @@ export function Version() {
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);
 const $$createType1 = model$0.Settings.createFrom;
+const $$createType2 = model$0.RecycleEntry.createFrom;
+const $$createType3 = $Create.Array($$createType2);

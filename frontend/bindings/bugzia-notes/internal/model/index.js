@@ -6,5 +6,6 @@ export {
     HotkeySettings,
     NoteSettings,
     NoteStyle,
+    RecycleEntry,
     Settings
 } from "./models.js";

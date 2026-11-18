@@ -45,6 +45,19 @@ button:hover { background: #8d4560; }
   font-size: 12px;
 }
 
+/* 检查更新行（按钮复用上方全局 button 玫红样式） */
+.update-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.update-status {
+  color: #8a8894;
+  font-size: 12px;
+}
+
 /* 开机自启动开关：原生 checkbox 隐藏，switch-ui 绘制轨道（玫红同源色） */
 .switch-row { cursor: pointer; }
 

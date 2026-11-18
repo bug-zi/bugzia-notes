@@ -17,6 +17,7 @@ import (
 const (
 	notesFileName    = "notes.json"
 	settingsFileName = "settings.json"
+	recycleFileName  = "recycle.json"
 	// SaveDelay 便签持久化防抖时长（与 bugzia 一致）。
 	SaveDelay = 400 * time.Millisecond
 )
@@ -32,6 +33,11 @@ type settingsFile struct {
 	Hotkeys model.HotkeySettings `json:"hotkeys"`
 }
 
+type recycleFile struct {
+	Version int                  `json:"version"`
+	Entries []model.RecycleEntry `json:"entries"`
+}
+
 // Store 是磁盘文件的唯一写者（对应 bugzia 中 main 窗口的唯一写者地位）。
 type Store struct {
 	mu           sync.Mutex
@@ -41,6 +47,7 @@ type Store struct {
 	saveTimer    *time.Timer
 	pending      []model.NoteRecord
 	settings     model.Settings
+	recycle      []model.RecycleEntry // 新到旧（头插保序）
 }
 
 // New 打开（或创建）配置目录下的存储。目录不存在会自动创建。
@@ -50,11 +57,13 @@ func New(dir string) (*Store, error) {
 	}
 	s := &Store{dir: dir, delay: SaveDelay}
 	s.settings = s.loadSettings()
+	s.recycle = s.loadRecycle()
 	return s, nil
 }
 
 func (s *Store) NotesPath() string    { return filepath.Join(s.dir, notesFileName) }
 func (s *Store) SettingsPath() string { return filepath.Join(s.dir, settingsFileName) }
+func (s *Store) RecyclePath() string  { return filepath.Join(s.dir, recycleFileName) }
 
 // LoadNotes 读已持久化便签（全量含未钉）。缺失 / 损坏一律回退空表
 // （与 bugzia 行为一致），兼容 {notes:[...]} 与裸数组 legacy 两种形状。
@@ -214,4 +223,48 @@ func atomicWrite(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func (s *Store) loadRecycle() []model.RecycleEntry {
+	data, err := os.ReadFile(s.RecyclePath())
+	if err != nil {
+		return nil
+	}
+	var f recycleFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		log.Printf("[store] recycle.json 损坏，回退空表: %v", err)
+		return nil
+	}
+	return f.Entries
+}
+
+// AddRecycleEntry 头插新条目（保持新到旧）、裁剪至上限并立即原子写盘
+// （删除低频，不走防抖，避免退出边缘丢数据）。写盘失败仅记日志。
+func (s *Store) AddRecycleEntry(e model.RecycleEntry) {
+	s.mu.Lock()
+	s.recycle = append([]model.RecycleEntry{e}, s.recycle...)
+	if len(s.recycle) > model.RecycleMaxEntries {
+		s.recycle = s.recycle[:model.RecycleMaxEntries]
+	}
+	snap := make([]model.RecycleEntry, len(s.recycle))
+	copy(snap, s.recycle)
+	s.mu.Unlock()
+	f := recycleFile{Version: 1, Entries: snap}
+	data, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		log.Printf("[store] 序列化 recycle.json 失败: %v", err)
+		return
+	}
+	if err := atomicWrite(s.RecyclePath(), data); err != nil {
+		log.Printf("[store] 写 recycle.json 失败: %v", err)
+	}
+}
+
+// RecycleEntries 返回回收站快照（新到旧）。
+func (s *Store) RecycleEntries() []model.RecycleEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.RecycleEntry, len(s.recycle))
+	copy(out, s.recycle)
+	return out
 }

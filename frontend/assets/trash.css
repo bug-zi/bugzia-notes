@@ -1,0 +1,92 @@
+/* 回收站窗口：深色实底、玫红点缀（与设置窗口同源），无高饱和撞色。 */
+
+html, body {
+  margin: 0;
+  background: #1e1e24;
+  color: #e8e6ea;
+  font: 13px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+.panel {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 32px);
+  box-sizing: border-box;
+}
+
+h2 {
+  font-size: 14px;
+  color: #d98ba1;
+  border-bottom: 1px solid #33323a;
+  padding-bottom: 6px;
+  margin: 0 0 10px;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid #33323a;
+  border-radius: 6px;
+  background: #26252c;
+}
+
+.row {
+  padding: 7px 10px;
+  border-bottom: 1px solid #2e2d35;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.row:last-child { border-bottom: none; }
+
+.row:hover { background: #2f2e37; }
+
+.row.selected { background: #3a2e35; }
+
+.row .preview {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row .time {
+  color: #8a8894;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.detail {
+  margin-top: 10px;
+  border: 1px solid #3a3942;
+  border-radius: 6px;
+  background: #26252c;
+  padding: 10px 12px;
+  max-height: 45vh;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.detail .meta {
+  color: #8a8894;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.detail .content {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.hint {
+  color: #8a8894;
+  font-size: 12px;
+  margin: 8px 0 0;
+}

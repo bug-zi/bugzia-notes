@@ -17,6 +17,8 @@ const (
 	SentinelCoord = -1
 	// MaxCoord 尺寸上限，防止异常数据把窗口撑出天文数字。
 	MaxCoord = 4096
+	// RecycleMaxEntries 回收站条目上限，超出裁掉最旧。
+	RecycleMaxEntries = 100
 )
 
 // NoteRecord 单张钉住便签。几何为逻辑像素，语义与 bugzia NoteRecord 一致；
@@ -42,6 +44,15 @@ type NoteStyle struct {
 	BgAlpha float64 `json:"bg_alpha"`
 	Radius  int     `json:"radius"`
 	FontSize int    `json:"font_size"`
+}
+
+// RecycleEntry 回收站条目：销毁非空便签时自动存入（纯查看，无恢复）。
+type RecycleEntry struct {
+	ID        string `json:"id"`         // 原便签 id（溯源参考，UI 不展示）
+	Content   string `json:"content"`
+	CreatedAt int64  `json:"created_at"` // 毫秒时间戳，与 NoteRecord 同约定
+	UpdatedAt int64  `json:"updated_at"`
+	DeletedAt int64  `json:"deleted_at"` // 毫秒时间戳，排序键
 }
 
 // NoteSettings 便签样式默认值。文字颜色固定白色，不提供设置。

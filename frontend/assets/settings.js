@@ -150,6 +150,21 @@ autoSwitch.addEventListener("change", async () => {
   setTimeout(() => { autoMsg.textContent = ""; }, 3000);
 });
 
+/* ── 检查更新（手动，跳过节流；行内反馈，弹窗链路在 main.go updateFlow）── */
+
+const updateStatus = document.getElementById("update-status");
+document.getElementById("check-update").addEventListener("click", async () => {
+  updateStatus.textContent = "检查中…";
+  try {
+    const r = await wails.Call.ByName(NS + "CheckUpdate");
+    if (r.status === "latest") updateStatus.textContent = "已是最新版本";
+    else if (r.status === "has_update") updateStatus.textContent = "发现新版本 " + r.version + "（请在弹窗中确认）";
+    else updateStatus.textContent = "检查失败: " + (r.error || "未知错误");
+  } catch (e) {
+    updateStatus.textContent = "检查失败: " + e;
+  }
+});
+
 /* ── 初始化：读设置回填 ───────────────────────────────────────────── */
 
 async function init() {

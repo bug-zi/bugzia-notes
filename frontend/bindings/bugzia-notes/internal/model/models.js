@@ -201,6 +201,68 @@ export class NoteStyle {
 }
 
 /**
+ * RecycleEntry 回收站条目：销毁非空便签时自动存入（纯查看，无恢复）。
+ */
+export class RecycleEntry {
+    /**
+     * Creates a new RecycleEntry instance.
+     * @param {Partial<RecycleEntry>} [$$source = {}] - The source object to create the RecycleEntry.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * 原便签 id（溯源参考，UI 不展示）
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("content" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["content"] = "";
+        }
+        if (!("created_at" in $$source)) {
+            /**
+             * 毫秒时间戳，与 NoteRecord 同约定
+             * @member
+             * @type {number}
+             */
+            this["created_at"] = 0;
+        }
+        if (!("updated_at" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["updated_at"] = 0;
+        }
+        if (!("deleted_at" in $$source)) {
+            /**
+             * 毫秒时间戳，排序键
+             * @member
+             * @type {number}
+             */
+            this["deleted_at"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RecycleEntry instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {RecycleEntry}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new RecycleEntry(/** @type {Partial<RecycleEntry>} */($$parsedSource));
+    }
+}
+
+/**
  * Settings settings.json 的内存形状。
  */
 export class Settings {

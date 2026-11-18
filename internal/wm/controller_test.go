@@ -445,3 +445,52 @@ func TestApplySettingsExemptsLockedNote(t *testing.T) {
 		t.Fatalf("未锁定便签应收到新全局样式: %+v", ops.hydratedStyles[1])
 	}
 }
+
+func TestDestroyNonEmptySavesToRecycle(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.CreateBlankNote()
+	id := ctl.noteIDs()[0]
+	ctl.SetContent(id, "要找回的内容")
+	before := ctl.AllRecords()[0]
+	ctl.ConfirmDestroy(id)
+	entries := ctl.store.RecycleEntries()
+	if len(entries) != 1 {
+		t.Fatalf("销毁非空便签应入回收站: %d", len(entries))
+	}
+	e := entries[0]
+	if e.ID != id || e.Content != "要找回的内容" || e.CreatedAt != before.CreatedAt {
+		t.Fatalf("回收站条目字段应透传: %+v", e)
+	}
+	if e.DeletedAt <= 0 {
+		t.Fatalf("DeletedAt 应为销毁时刻: %d", e.DeletedAt)
+	}
+	if ctl.hasNote(id) {
+		t.Fatal("便签应已从权威列表移除")
+	}
+}
+
+func TestDestroyBlankNotSavesToRecycle(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.CreateBlankNote()
+	id := ctl.noteIDs()[0]
+	ctl.SetContent(id, "   \n\t ")
+	ctl.ConfirmDestroy(id)
+	if entries := ctl.store.RecycleEntries(); len(entries) != 0 {
+		t.Fatalf("销毁空白便签不应入回收站: %+v", entries)
+	}
+}
+
+func TestCancelConfirmNotSavesToRecycle(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.CreateBlankNote()
+	id := ctl.noteIDs()[0]
+	ctl.SetContent(id, "内容")
+	ctl.RequestDestroy(id)
+	ctl.CancelConfirm(id)
+	if entries := ctl.store.RecycleEntries(); len(entries) != 0 {
+		t.Fatalf("取消确认不应入回收站: %+v", entries)
+	}
+	if !ctl.hasNote(id) {
+		t.Fatal("取消后便签应仍在")
+	}
+}

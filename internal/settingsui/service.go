@@ -24,6 +24,7 @@ type Service struct {
 	ctl   *wm.Controller
 	mgr   *hotkey.Manager
 	fire  func(id int) // 热键触发回调（main 注入，内含主线程调度）
+	check func(manual bool) map[string]any // 更新检查回调（main 注入，含弹框与重启流程）
 }
 
 // NewService 构建设置服务。
@@ -36,6 +37,9 @@ func (s *Service) GetSettings() model.Settings { return s.st.Settings() }
 
 // Version 返回应用版本。
 func (s *Service) Version() string { return Version }
+
+// ListRecycle 回收站条目快照（新到旧），回收站窗口经 Call.ByName 调用。
+func (s *Service) ListRecycle() []model.RecycleEntry { return s.st.RecycleEntries() }
 
 // ApplyNoteStyle 应用样式默认：实时生效（全部便签重绘）并落盘。
 func (s *Service) ApplyNoteStyle(note model.NoteSettings) error {
@@ -111,6 +115,17 @@ func (s *Service) SetAutoStart(enable bool) error {
 		return err
 	}
 	return autostart.Enable(exe)
+}
+
+// SetUpdateCheck 注入更新检查回调（main 在 app 构建后设置；nil 时手动检查报未就绪）。
+func (s *Service) SetUpdateCheck(fn func(manual bool) map[string]any) { s.check = fn }
+
+// CheckUpdate 手动检查更新（设置窗口按钮）：跳过 24h 节流，每个终点都有反馈。
+func (s *Service) CheckUpdate() map[string]any {
+	if s.check == nil {
+		return map[string]any{"status": "error", "error": "更新检查未就绪"}
+	}
+	return s.check(true)
 }
 
 // MigrateBugziaConfig 把 bugzia 配置（便签样式默认 + 便签三键）迁移进本应用：

@@ -69,7 +69,8 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 - 便签上限 50 张（`model.MaxNotes`），达到上限经 `Notify` 提示（v1 落日志）
 - 数据目录 = exe 同目录 `data\`（便携式，不占 C 盘；`go run` 时 exe 在 Go 临时构建目录，回退用工作目录 `data\`）；首启自动把旧版 `%APPDATA%\bugzia-notes\` 的 notes.json/settings.json 迁移过来并清理旧目录（`migrateLegacyData`）；与 bugzia 数据互不读写，只提供一次性迁移：钉住便签 + 便签样式 + 便签三键（bugzia 的 summon 不迁移）；本应用无 settings.json 且检测到 bugzia 配置时首启自动迁移
 - 全局快捷键三键（默认从 bugzia 配置迁移，如 bugzia 无配置则 `alt+n` / `alt+shift+c` / `alt+z`）：集合切换、直接新建、销毁当前（= 最近新建/编辑那张，回退列表最后一张，带 Y/N 确认）
-- 托盘常驻；关闭全部便签窗口应用不退出（Wails 托盘模式，spike 已验证），托盘「退出」才真正结束；单实例用命名 mutex（`internal/instance`）
+- 托盘常驻，菜单仅「回收站 / 设置 / 退出」三项（2026-11-18 精简，「新建便签 / 显示全部 / 隐藏全部」已删，对应 Controller.ShowAll 已删）；关闭全部便签窗口应用不退出（Wails 托盘模式，spike 已验证），托盘「退出」才真正结束；单实例用命名 mutex（`internal/instance`）
+- 回收站：销毁非空便签时内容自动入站（`ConfirmDestroy` 尾部挂钩，唯一删除入口），`data\recycle.json` 持久化（头插新到旧、上限 100 裁最旧、立即写盘不走防抖、损坏回退空表）；托盘「回收站」开单例窗口（Name="trash"，trash.html）纯查看，数据经 `settingsui.Service.ListRecycle`
 
 ## 工程硬性规则
 

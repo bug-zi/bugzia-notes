@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>bugzia-notes 回收站</title>
+<link rel="stylesheet" href="/assets/trash.css">
+</head>
+<body>
+<div class="panel">
+  <h2>回收站（最近删除，从新到旧）</h2>
+  <div id="list" class="list"></div>
+  <div id="detail" class="detail" hidden>
+    <div class="meta" id="detail-meta"></div>
+    <pre class="content" id="detail-content"></pre>
+  </div>
+  <p class="hint" id="empty-hint" hidden>回收站为空</p>
+  <p class="hint">销毁非空便签时自动存入，上限 100 条（超出裁掉最旧）。</p>
+</div>
+<script type="module" src="/assets/trash.js"></script>
+</body>
+</html>
