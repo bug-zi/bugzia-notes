@@ -8,6 +8,8 @@ package autostart
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -62,12 +64,43 @@ func Disable() error {
 	return nil
 }
 
-// SelfHeal 启动自愈：Run 值存在但数据与当前 exe 不符（exe 被挪动/换构建
-// 输出）时整串重写；未启用时不动。整串对比免去解析引号路径。
+// stableExeName 稳定版产物名（自启动条目的唯一合法目标）。
+const stableExeName = "bugzia-notes.exe"
+
+// isStableExe 当前进程是否稳定版。dev 构建（bugzia-notes-dev.exe）与
+// go run 临时目录里的进程一律不算——它们不得触碰自启动条目。
+func isStableExe(exePath string) bool {
+	if filepath.Base(exePath) != stableExeName {
+		return false
+	}
+	return !underGoBuildTmp(filepath.Dir(exePath))
+}
+
+// underGoBuildTmp 判断目录是否位于系统临时目录下的 go-build* 内
+//（与 main.go 同款判定；go run 的临时产物也恰好叫 bugzia-notes.exe）。
+func underGoBuildTmp(dir string) bool {
+	tmp := os.TempDir()
+	if tmp == "" {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(tmp), filepath.Clean(dir))
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	return strings.Contains(filepath.ToSlash(rel), "go-build")
+}
+
+// SelfHeal 启动自愈：Run 值存在但数据与当前稳定版 exe 不符（exe 被挪动/
+// 换构建输出）时整串重写；未启用时不动。仅稳定版进程有权自愈——否则任何
+// 一次 dev 运行都会把条目劫持到当前二进制（2026-11-18 事故：开机按条目
+// 启动旧 dev 构建，黑框弹出且旧代码把 v2 数据回写降级）。
 func SelfHeal() error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
+	}
+	if !isStableExe(exe) {
+		return nil
 	}
 	key, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.QUERY_VALUE|registry.SET_VALUE)
 	if err != nil {
