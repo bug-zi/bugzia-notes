@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"bugzia-notes/internal/model"
@@ -609,12 +610,18 @@ func TestStartHiddenPrebuildsMainHidden(t *testing.T) {
 	}
 }
 
-func TestAuxNoteStyleLockRejected(t *testing.T) {
+func TestAuxNoteStyleLockAllowed(t *testing.T) {
 	ctl, _ := newTestController(t)
 	ctl.ToggleSlot(1)
 	id := ctl.noteIDs()[0]
-	if err := ctl.SetNoteStyleLock(id, true); err == nil {
-		t.Fatal("辅助便签应拒绝样式锁")
+	if err := ctl.SetNoteStyleLock(id, true); err != nil {
+		t.Fatalf("辅助便签应允许样式锁: %v", err)
+	}
+	if ctl.AllRecords()[0].Style == nil {
+		t.Fatal("锁定后应有快照")
+	}
+	if err := ctl.SetNoteStyleLock(id, false); err != nil {
+		t.Fatalf("辅助便签解锁不应报错: %v", err)
 	}
 }
 
@@ -645,18 +652,163 @@ func TestImportRecordsAssignsSlotsByRecency(t *testing.T) {
 
 func TestToggleSlotFillsSixSlots(t *testing.T) {
 	ctl, _ := newTestController(t)
-	for slot := 0; slot < model.MaxNotes; slot++ {
+	for slot := 0; slot < model.SlotCount; slot++ {
 		ctl.ToggleSlot(slot)
 	}
-	if ctl.Count() != model.MaxNotes {
-		t.Fatalf("应建满 %d 张: %d", model.MaxNotes, ctl.Count())
+	if ctl.Count() != model.SlotCount {
+		t.Fatalf("应建满 %d 张: %d", model.SlotCount, ctl.Count())
 	}
 	ctl.ToggleSlot(3) // 已显示 → 隐藏，不新建
-	if ctl.Count() != model.MaxNotes {
+	if ctl.Count() != model.SlotCount {
 		t.Fatal("重复按键不应新建")
 	}
 	ctl.ToggleSlot(9) // 越界忽略
-	if ctl.Count() != model.MaxNotes {
+	if ctl.Count() != model.SlotCount {
 		t.Fatal("越界槽位应忽略")
+	}
+}
+
+func TestCreateOrSummonFreeCreatesWhenNone(t *testing.T) {
+	ctl, ops := newTestController(t)
+	ctl.CreateOrSummonFree()
+	ids := ctl.noteIDs()
+	if len(ids) != 1 {
+		t.Fatalf("应新建 1 张自由便签: %v", ids)
+	}
+	rec, _ := ctl.recForTest(ids[0])
+	if rec.Slot != model.SlotFree || !rec.Pinned {
+		t.Fatalf("自由便签应 SlotFree 且即钉住: %+v", rec)
+	}
+	if rec.Title == "" {
+		t.Fatal("自由便签应有默认标题")
+	}
+	if ctl.activeIDForTest() != ids[0] {
+		t.Fatal("新建应成为当前便签")
+	}
+	ctl.HydrateTo(ids[0])
+	if len(ops.focused) != 1 || ops.focused[0] != ids[0] {
+		t.Fatalf("ready 后应聚焦: %v", ops.focused)
+	}
+}
+
+func TestCreateOrSummonFreeCreatesWhenAllVisible(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.CreateOrSummonFree()
+	ctl.CreateOrSummonFree()
+	if ctl.Count() != 2 {
+		t.Fatalf("全部可见时连按应连建: %d", ctl.Count())
+	}
+}
+
+func TestCreateOrSummonFreeSummonsHiddenMostRecent(t *testing.T) {
+	ctl, ops := newTestController(t)
+	ctl.CreateOrSummonFree()
+	first := ctl.noteIDs()[0]
+	ctl.CreateOrSummonFree()
+	second := ctl.noteIDs()[1]
+	// 让更晚创建的 second 反而更新时间更早，验证取 UpdatedAt 最大者
+	ctl.mu.Lock()
+	ctl.findLocked(first).rec.UpdatedAt = 900
+	ctl.findLocked(second).rec.UpdatedAt = 100
+	ctl.mu.Unlock()
+	ctl.hideNote(first)
+	ctl.hideNote(second)
+	before := ctl.Count()
+	ctl.CreateOrSummonFree()
+	if ctl.Count() != before {
+		t.Fatal("召唤不应新建")
+	}
+	if !ctl.visible[first] || ops.hidden[first] || ctl.visible[second] {
+		t.Fatal("应召唤 UpdatedAt 最大的隐藏自由便签")
+	}
+	if ctl.activeIDForTest() != first {
+		t.Fatal("召唤应成为当前便签")
+	}
+}
+
+func TestMaxNotesCapTwenty(t *testing.T) {
+	ctl, ops := newTestController(t)
+	for slot := 0; slot < model.SlotCount; slot++ {
+		ctl.ToggleSlot(slot)
+	}
+	for i := 0; i < model.MaxNotes-model.SlotCount; i++ {
+		ctl.CreateOrSummonFree()
+	}
+	if ctl.Count() != model.MaxNotes {
+		t.Fatalf("应可建满 %d 张: %d", model.MaxNotes, ctl.Count())
+	}
+	ctl.CreateOrSummonFree()
+	if ctl.Count() != model.MaxNotes || len(ops.notify) == 0 {
+		t.Fatal("满员新建应被拒并提示")
+	}
+	var slot3 string
+	ctl.mu.Lock()
+	for _, n := range ctl.notes {
+		if n.rec.Slot == 3 {
+			slot3 = n.rec.ID
+		}
+	}
+	ctl.mu.Unlock()
+	ctl.ToggleSlot(3) // 显示中 → 隐藏
+	ctl.ToggleSlot(3) // 隐藏 → 召唤（不走创建分支，不受上限影响）
+	if !ctl.visible[slot3] || ctl.Count() != model.MaxNotes {
+		t.Fatal("满员时隐藏槽位的召唤应照常")
+	}
+	ctl.ConfirmDestroy(slot3)
+	ctl.ToggleSlot(3) // 槽位空 → 创建（名额已腾出）
+	if ctl.Count() != model.MaxNotes {
+		t.Fatalf("销毁腾名额后槽位键应可重建: %d", ctl.Count())
+	}
+}
+
+func TestDefaultTitleNumberingSkipsTaken(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(0)        // 便签1
+	ctl.ToggleSlot(1)        // 便签2
+	ctl.CreateOrSummonFree() // 便签3
+	ids := ctl.noteIDs()
+	r0, _ := ctl.recForTest(ids[0])
+	r1, _ := ctl.recForTest(ids[1])
+	r2, _ := ctl.recForTest(ids[2])
+	if r0.Title != "便签1" || r1.Title != "便签2" || r2.Title != "便签3" {
+		t.Fatalf("默认标题应按创建顺序编号: %q %q %q", r0.Title, r1.Title, r2.Title)
+	}
+	ctl.SetTitle(ids[1], "购物清单")
+	ctl.CreateOrSummonFree() // 现有 便签1/购物清单/便签3 → start=4 → 便签4
+	r3, _ := ctl.recForTest(ctl.noteIDs()[3])
+	if r3.Title != "便签4" {
+		t.Fatalf("编号应从创建后总数起试: %q", r3.Title)
+	}
+	ctl.ConfirmDestroy(ids[2]) // 销毁便签3
+	ctl.CreateOrSummonFree()   // 现有 便签1/购物清单/便签4 → start=4 被占 → 便签5
+	r4, _ := ctl.recForTest(ctl.noteIDs()[3])
+	if r4.Title != "便签5" {
+		t.Fatalf("销毁后新建应避开占用编号: %q", r4.Title)
+	}
+}
+
+func TestSetTitleTrimsClampsAndGuards(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(0)
+	id := ctl.noteIDs()[0]
+
+	ctl.SetTitle(id, "  购物清单  ")
+	if r, _ := ctl.recForTest(id); r.Title != "购物清单" {
+		t.Fatalf("应 trim 首尾空白: %q", r.Title)
+	}
+	ctl.SetTitle(id, strings.Repeat("长", model.MaxTitleLen+5))
+	if r, _ := ctl.recForTest(id); len([]rune(r.Title)) != model.MaxTitleLen {
+		t.Fatalf("应按 rune 截断到 %d: %d", model.MaxTitleLen, len([]rune(r.Title)))
+	}
+	ctl.SetTitle(id, "   ")
+	if r, _ := ctl.recForTest(id); r.Title == "" {
+		t.Fatal("空白标题不应覆盖旧值")
+	}
+	ctl.SetTitle("no-such-id", "x") // 不应 panic
+	ctl.scheduleSave()
+	ctl.store.Close()
+	saved := ctl.store.LoadNotes()
+	if len(saved) != 1 || saved[0].Title == "" {
+		t.Fatalf("标题应随记录落盘: %+v", saved)
 	}
 }

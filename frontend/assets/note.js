@@ -12,6 +12,8 @@ const textEl = document.getElementById("text");
 const ta = document.getElementById("ta");
 const bodyEl = document.getElementById("body");
 const btnPin = document.getElementById("btn-pin");
+const titleEl = document.getElementById("note-title");
+const titleInput = document.getElementById("title-input");
 const btnCopy = document.getElementById("btn-copy");
 const btnDestroy = document.getElementById("btn-destroy");
 const confirmEl = document.getElementById("confirm");
@@ -39,6 +41,8 @@ let panelOpen = false;
 let curStyle = null;    // 最近一次生效样式（面板打开时回填表单）
 let applying = false;   // 防重入
 let slot = 0;           // 槽位：0=主便签，1~5=辅助（hydrate 载荷带 slot）
+let title = "";         // 最近一次生效标题（Go 侧规范化值）
+let titleEditing = false;
 const NS = "bugzia-notes/internal/settingsui.Service.";
 
 /* ── 注水 ─────────────────────────────────────────────────────────── */
@@ -50,8 +54,7 @@ wails.Events.On("note:hydrate", (ev) => {
   const data = ev && ev.data;
   if (!data || data.id !== id) return; // 只认发给自己的（防串台）
   slot = data.slot ?? 0;
-  btnStyle.hidden = slot >= 1; // 辅助便签禁用样式锁：底色由槽位色统一设置
-  if (slot >= 1 && panelOpen) closePanel();
+  applyTitle(data.title ?? "");
   applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked);
 });
 
@@ -87,6 +90,64 @@ function applyContent(next, nextPinned, settings, nextLocked) {
   }
 }
 
+function applyTitle(next) {
+  title = next ?? "";
+  if (titleEditing) return; // 编辑中不打断输入（提交后的重推会对齐）
+  titleEl.textContent = title;
+  titleEl.title = title; // 悬停显示完整名
+}
+
+/* ── 标题编辑（双击行内改，Enter/失焦提交，Esc 还原）──────────────── */
+
+titleEl.addEventListener("dblclick", () => startTitleEdit());
+
+function startTitleEdit() {
+  if (titleEditing || confirming) return;
+  commitEdit(); // 正文编辑先提交
+  titleEditing = true;
+  titleEl.hidden = true;
+  titleInput.hidden = false;
+  titleInput.value = title;
+  titleInput.focus();
+  titleInput.select();
+}
+
+function commitTitle() {
+  if (!titleEditing) return;
+  titleEditing = false;
+  titleInput.hidden = true;
+  titleEl.hidden = false;
+  const next = titleInput.value;
+  if (next !== title && next.trim() !== "") {
+    // 规范化（trim/截断）在 Go 侧 SetTitle，成功后重推回显；未变化时
+    // Go 不重推，标题区保持旧文本即为正确显示
+    wails.Events.Emit("note:renamed", { id, title: next });
+  } else {
+    titleEl.textContent = title;
+    titleEl.title = title;
+  }
+}
+
+function cancelTitle() {
+  if (!titleEditing) return;
+  titleEditing = false;
+  titleInput.hidden = true;
+  titleEl.hidden = false;
+  titleEl.textContent = title;
+  titleEl.title = title;
+}
+
+titleInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    commitTitle();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    cancelTitle();
+  }
+});
+titleInput.addEventListener("blur", () => commitTitle());
+
 function applyStyle(s) {
   if (!s) return;
   const rgba = (r, g, b, a) =>
@@ -97,13 +158,16 @@ function applyStyle(s) {
   );
   root.style.setProperty("--note-radius", (s.radius ?? 10) + "px");
   root.style.setProperty("--note-font", (s.font_size ?? 14) + "px");
-  // 辅助便签「已钉住」字色 = 底色（槽位色，EffectiveStyle 已算进 bg_*）；
-  // 主便签不设置，CSS 回落深红 #9e1b32
-  if (slot >= 1) {
+  // 「已钉住」字色与底色同源：辅助（槽位色）或已锁定（快照色）便签注入
+  // 生效底色；主/自由未锁不注入，CSS 回落深红 #9e1b32。
+  // 解锁后必须移除属性，否则残留上一次锁定时的注入值。
+  if (slot >= 1 || locked) {
     root.style.setProperty(
       "--note-pin-ink",
       `rgb(${s.bg_r ?? 201}, ${s.bg_g ?? 88}, ${s.bg_b ?? 119})`
     );
+  } else {
+    root.style.removeProperty("--note-pin-ink");
   }
 }
 
@@ -297,10 +361,13 @@ function closePanel() {
 function syncLockUI() {
   btnStyleLock.classList.toggle("active", locked);
   lockPath.setAttribute("d", locked ? LOCK_PATH : LOCK_OPEN_PATH);
-  lockLabel.textContent = locked ? "已锁定（独立样式）" : "跟随全局";
-  btnStyleLock.title = locked ? "解锁：恢复跟随全局默认样式" : "锁定：样式独立，可单独修改";
+  const followText = slot >= 1 ? "跟随槽位色" : "跟随全局";
+  lockLabel.textContent = locked ? "已锁定（独立样式）" : followText;
+  btnStyleLock.title = locked ? "解锁：恢复跟随" : "锁定：样式独立，可单独修改";
   for (const el of Object.values(spFields)) el.disabled = !locked;
-  spMsg.textContent = locked ? "" : "当前跟随全局默认，锁定后可单独修改";
+  spMsg.textContent = locked ? ""
+    : slot >= 1 ? "当前跟随槽位色，锁定后可单独修改"
+    : "当前跟随全局默认，锁定后可单独修改";
   fillForm(curStyle);
 }
 

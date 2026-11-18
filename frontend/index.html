@@ -27,7 +27,7 @@
   <h2>全局快捷键（留空 = 禁用）</h2>
   <div class="row">
     <label>主便签切换 <input id="hk-toggle" placeholder="alt+n"></label>
-    <label>主便签 <input id="hk-main" placeholder="alt+c"></label>
+    <label>新建便签 <input id="hk-main" placeholder="alt+c"></label>
     <label>销毁当前 <input id="hk-destroy" placeholder="alt+z"></label>
   </div>
   <div class="row">
@@ -44,9 +44,10 @@
     <span id="hk-msg" class="msg"></span>
   </div>
   <p class="hint">
-    主便签切换 / 主便签：只切换主便签的显示/隐藏（首次按下自动创建），
-    不干涉辅助便签；两条键位等效，可按习惯绑定两键。
-    辅助便签 1~5：需要多便签时逐个召唤，各一色，互不相干。
+    主便签切换：只切换主便签的显示/隐藏（首次按下自动创建），不干涉其他便签。
+    新建便签：新建一张自由便签（默认样式，可在便签上锁定独立样式）；
+    若有隐藏的自由便签则先召唤最近一张。
+    辅助便签 1~5：固定五槽位逐个召唤，未锁定时底色为槽位色，锁定后独立。
     销毁当前：销毁最近新建或编辑的那张，带确认。
   </p>
 
@@ -61,6 +62,7 @@
     <label>辅助 5 <input id="aux-color-5" type="color"></label>
     <span id="aux-color-msg" class="msg"></span>
   </div>
+  <p class="hint">辅助便签未锁定样式时底色 = 槽位色（改动实时生效）；在便签「设置」里锁定样式后独立。</p>
 
   <h2>通用</h2>
   <div class="row">
@@ -70,7 +72,7 @@
     </label>
     <span id="autostart-msg" class="msg"></span>
   </div>
-  <p class="hint">开启后随系统静默启动：仅托盘驻留，按主便签键召唤便签。</p>
+  <p class="hint">开启后随系统静默启动：仅托盘驻留，按任意便签键召唤对应便签。</p>
 
   <p class="version" id="version"></p>
   <p class="update-row">

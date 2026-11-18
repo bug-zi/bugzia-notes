@@ -78,7 +78,7 @@ func TestParseAllEmptyMeansDisabled(t *testing.T) {
 
 func TestLabelCoversEightKeys(t *testing.T) {
 	want := map[int]string{
-		IDToggle: "主便签切换", IDMain: "主便签", IDKill: "销毁当前",
+		IDToggle: "主便签切换", IDMain: "新建便签", IDKill: "销毁当前",
 		IDAux1: "辅助便签 1", IDAux2: "辅助便签 2", IDAux3: "辅助便签 3",
 		IDAux4: "辅助便签 4", IDAux5: "辅助便签 5",
 	}

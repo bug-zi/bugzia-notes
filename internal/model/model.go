@@ -2,16 +2,23 @@
 package model
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 const (
-	// MaxNotes 槽位上限：1 主 + 5 辅（2026-11-18 槽位模型，全面取代自由列表）。
-	MaxNotes = 6
-	// SlotMain 主便签槽位；辅助便签 = 1..MaxNotes-1。
+	// MaxNotes 便签总数上限（6 槽位 + 自由便签共享；v2.1.0 回归 v1 总量语义）。
+	MaxNotes = 20
+	// SlotCount 固定槽位数：1 主 + 5 辅（v2.0.0 槽位模型）。
+	SlotCount = 6
+	// SlotMain 主便签槽位；辅助便签 = 1..SlotCount-1。
 	SlotMain = 0
+	// SlotFree 自由便签哨兵槽位：「新建便签」键创建，不占 6 槽位。
+	SlotFree = -1
+	// MaxTitleLen 便签标题最大长度（rune 数）。
+	MaxTitleLen = 30
 	// MinW / MinH 便签窗口最小逻辑尺寸（与 bugzia MIN_W/MIN_H 一致）。
 	MinW = 160
 	MinH = 120
@@ -28,6 +35,7 @@ const (
 type NoteRecord struct {
 	ID        string     `json:"id"`
 	Content   string     `json:"content"`
+	Title     string     `json:"title"` // 便签标题（默认「便签n」，双击头部可改）
 	X         int        `json:"x"`
 	Y         int        `json:"y"`
 	W         int        `json:"w"`
@@ -41,17 +49,17 @@ type NoteRecord struct {
 
 // NoteStyle 为 v1.1 的每便签独立样式预留；v1 恒为 nil（用全局默认）。
 type NoteStyle struct {
-	BgR     int     `json:"bg_r"`
-	BgG     int     `json:"bg_g"`
-	BgB     int     `json:"bg_b"`
-	BgAlpha float64 `json:"bg_alpha"`
-	Radius  int     `json:"radius"`
-	FontSize int    `json:"font_size"`
+	BgR      int     `json:"bg_r"`
+	BgG      int     `json:"bg_g"`
+	BgB      int     `json:"bg_b"`
+	BgAlpha  float64 `json:"bg_alpha"`
+	Radius   int     `json:"radius"`
+	FontSize int     `json:"font_size"`
 }
 
 // RecycleEntry 回收站条目：销毁非空便签时自动存入（纯查看，无恢复）。
 type RecycleEntry struct {
-	ID        string `json:"id"`         // 原便签 id（溯源参考，UI 不展示）
+	ID        string `json:"id"` // 原便签 id（溯源参考，UI 不展示）
 	Content   string `json:"content"`
 	CreatedAt int64  `json:"created_at"` // 毫秒时间戳，与 NoteRecord 同约定
 	UpdatedAt int64  `json:"updated_at"`
@@ -82,7 +90,7 @@ type NoteSettings struct {
 type HotkeySettings struct {
 	Toggle         string `json:"toggle"`          // 主便签切换（2.0.1 起只切主便签，原集合切换）
 	Create         string `json:"create"`          // v1 遗留（升级时→Main）
-	Main           string `json:"main"`            // 主便签召唤
+	Main           string `json:"main"`            // 新建自由便签（v2.1.0 起不再是主便签切换）
 	DestroyCurrent string `json:"destroy_current"` // 销毁当前
 	Aux1           string `json:"aux1"`            // 辅助便签 1~5
 	Aux2           string `json:"aux2"`
@@ -175,4 +183,15 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// NextDefaultTitle 默认标题「便签n」：从 start 起试，被占用则 n+1 顺延，
+// 返回首个未占用的（含「便签」前缀）。taken 为已占用标题集合（含自定义标题）。
+func NextDefaultTitle(taken map[string]bool, start int) string {
+	for n := start; ; n++ {
+		t := fmt.Sprintf("便签%d", n)
+		if !taken[t] {
+			return t
+		}
+	}
 }

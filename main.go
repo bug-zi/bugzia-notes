@@ -145,10 +145,10 @@ func launchSilent(args []string) bool {
 
 func dispatchHotkey(ctl *wm.Controller, id int) {
 	switch id {
-	// 2.0.1 起「集合切换」收窄为主便签切换：只切主便签，不干涉辅助便签，
-	// 与主便签键同语义；两个键位槽保留，兼容已有键位配置（如 alt+c / alt+shift+c）。
-	case hotkey.IDToggle, hotkey.IDMain:
-		ctl.ToggleSlot(model.SlotMain)
+	case hotkey.IDToggle:
+		ctl.ToggleSlot(model.SlotMain) // 主便签切换（2.0.1 语义保持）
+	case hotkey.IDMain:
+		ctl.CreateOrSummonFree() // v2.1.0：回归「新建便签」，有隐藏自由便签先召唤最近一张
 	case hotkey.IDKill:
 		ctl.DestroyCurrent()
 	case hotkey.IDAux1:
@@ -302,6 +302,11 @@ func wireNoteEvents(app *application.App, ctl *wm.Controller) {
 	on("note:changed", func(m map[string]any) {
 		if id := evStr(m, "id"); id != "" {
 			ctl.SetContent(id, evStr(m, "content"))
+		}
+	})
+	on("note:renamed", func(m map[string]any) {
+		if id := evStr(m, "id"); id != "" {
+			ctl.SetTitle(id, evStr(m, "title"))
 		}
 	})
 	on("note:pintoggle", func(m map[string]any) {
@@ -504,6 +509,7 @@ func (o *wailsOps) Hydrate(id string, rec model.NoteRecord, style model.NoteStyl
 		"content": rec.Content,
 		"pinned":  rec.Pinned,
 		"slot":    rec.Slot,
+		"title":   rec.Title,
 		"style":   style,
 		"locked":  rec.Style != nil,
 	})

@@ -111,3 +111,19 @@ func TestClampFontSize(t *testing.T) {
 		}
 	}
 }
+
+func TestNextDefaultTitleSkipsTaken(t *testing.T) {
+	if got := NextDefaultTitle(map[string]bool{}, 1); got != "便签1" {
+		t.Fatalf("空集合应从 start 起: %q", got)
+	}
+	taken := map[string]bool{"便签3": true, "购物清单": true}
+	if got := NextDefaultTitle(taken, 3); got != "便签4" {
+		t.Fatalf("被占用应顺延: %q", got)
+	}
+	if got := NextDefaultTitle(taken, 4); got != "便签4" {
+		t.Fatalf("未被占用应直接用 start: %q", got)
+	}
+	if got := NextDefaultTitle(map[string]bool{"便签1": true}, 1); got != "便签2" {
+		t.Fatalf("自定义标题应参与占用判定: %q", got)
+	}
+}

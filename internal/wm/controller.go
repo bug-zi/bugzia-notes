@@ -124,7 +124,7 @@ func (c *Controller) startRestore(hidden bool) {
 // slot-model-design.md §7.1）：槽位无便签→创建并显示聚焦成为当前便签；
 // 隐藏→显示聚焦；已显示→隐藏。slot 越界忽略。
 func (c *Controller) ToggleSlot(slot int) {
-	if slot < 0 || slot >= model.MaxNotes {
+	if slot < 0 || slot >= model.SlotCount {
 		return
 	}
 	c.mu.Lock()
@@ -156,12 +156,13 @@ func (c *Controller) ToggleSlot(slot int) {
 // hidden=true 仅静默启动预建主便签用（不聚焦，召唤路径再聚焦）。
 func (c *Controller) createSlotNote(slot int, hidden bool) {
 	if !c.canAdd() {
-		c.Notify("bugzia-notes", "便笺已达上限（6）")
+		c.Notify("bugzia-notes", fmt.Sprintf("便笺已达上限（%d）", model.MaxNotes))
 		return
 	}
 	s := c.store.Settings().Note
 	rec := model.NewRecord("", s.W, s.H, true)
 	rec.Slot = slot
+	rec.Title = c.nextDefaultTitle()
 	live := c.openRecord(rec, true, hidden)
 	c.mu.Lock()
 	c.activeID = live.rec.ID
@@ -175,6 +176,65 @@ func (c *Controller) canAdd() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.notes) < model.MaxNotes
+}
+
+// CreateOrSummonFree 「新建便签」键（main）入口：有隐藏自由便签先召唤
+// UpdatedAt 最大的一张（静默启动恢复场景），否则新建一张自由便签。
+func (c *Controller) CreateOrSummonFree() {
+	c.mu.Lock()
+	var best *NoteLive
+	for _, n := range c.notes {
+		if n.rec.Slot != model.SlotFree || c.visible[n.rec.ID] {
+			continue
+		}
+		if best == nil || n.rec.UpdatedAt > best.rec.UpdatedAt {
+			best = n
+		}
+	}
+	id := ""
+	if best != nil {
+		id = best.rec.ID
+	}
+	c.mu.Unlock()
+	if id == "" {
+		c.createFreeNote()
+		return
+	}
+	c.showNote(id)
+	c.ops.FocusNote(id)
+	c.mu.Lock()
+	c.activeID = id // 召唤显示即成为当前便签
+	c.mu.Unlock()
+}
+
+// createFreeNote 新建自由便签：未锁定时跟随全局默认样式（独立样式设置的
+// 基线），即钉住、装箱定位、聚焦成为当前便签。
+func (c *Controller) createFreeNote() {
+	if !c.canAdd() {
+		c.Notify("bugzia-notes", fmt.Sprintf("便笺已达上限（%d）", model.MaxNotes))
+		return
+	}
+	s := c.store.Settings().Note
+	rec := model.NewRecord("", s.W, s.H, true)
+	rec.Slot = model.SlotFree
+	rec.Title = c.nextDefaultTitle()
+	live := c.openRecord(rec, true, false)
+	c.mu.Lock()
+	c.activeID = live.rec.ID
+	c.needsFocus[live.rec.ID] = true
+	c.mu.Unlock()
+}
+
+// nextDefaultTitle 默认标题「便签n」：n 从创建后的总数（现有数+1）起试，
+// 重名自动顺延。
+func (c *Controller) nextDefaultTitle() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	taken := map[string]bool{}
+	for _, n := range c.notes {
+		taken[n.rec.Title] = true
+	}
+	return model.NextDefaultTitle(taken, len(c.notes)+1)
 }
 
 // openRecord 为记录建窗口并加入权威列表。pack=true 走装箱定位，
@@ -294,6 +354,27 @@ func (c *Controller) CancelEdit(id string) {
 	}
 }
 
+// SetTitle 前端提交标题改名（双击头部标题）。trim + rune 截断 30；空白或
+// 未变化不覆盖。成功后单窗重推（前端以规范化标题回显）+ 防抖落盘。
+func (c *Controller) SetTitle(id, title string) {
+	title = strings.TrimSpace(title)
+	if runes := []rune(title); len(runes) > model.MaxTitleLen {
+		title = string(runes[:model.MaxTitleLen])
+	}
+	c.mu.Lock()
+	n := c.findLocked(id)
+	if n == nil || title == "" || n.rec.Title == title {
+		c.mu.Unlock()
+		return
+	}
+	n.rec.Title = title
+	n.rec.UpdatedAt = time.Now().UnixMilli()
+	rec := n.rec
+	c.mu.Unlock()
+	c.ops.Hydrate(id, rec, EffectiveStyle(rec, c.store.Settings()))
+	c.scheduleSave()
+}
+
 // NoteMoved 用户拖动结束（前端上报逻辑坐标）。
 func (c *Controller) NoteMoved(id string, x, y int) {
 	c.mu.Lock()
@@ -358,7 +439,8 @@ func (c *Controller) TogglePinned(id string) {
 
 // SetNoteStyleLock 锁定/解锁便签样式。锁定 = 把当前生效样式快照写入
 // rec.Style（此后独立，全局改动不再影响它）；解锁 = 清空（回跟随全局，
-// 立即跳到全局当前值）。均单窗重推 + 防抖落盘。
+// 立即跳到全局当前值）。均单窗重推 + 防抖落盘。v2.1.0 起所有便签
+// （主/辅/自由）均可锁。
 func (c *Controller) SetNoteStyleLock(id string, locked bool) error {
 	global := c.store.Settings()
 	c.mu.Lock()
@@ -366,12 +448,6 @@ func (c *Controller) SetNoteStyleLock(id string, locked bool) error {
 	if n == nil {
 		c.mu.Unlock()
 		return fmt.Errorf("便签不存在: %s", id)
-	}
-	if n.rec.Slot >= 1 {
-		// 辅助便签禁用样式锁：底色唯一来源 = 槽位色设置（纵深防御，
-		// 前端已隐藏入口，design §8）
-		c.mu.Unlock()
-		return fmt.Errorf("辅助便签底色由「辅助便签颜色」统一设置")
 	}
 	if locked {
 		snap := EffectiveStyle(n.rec, global)
@@ -396,12 +472,6 @@ func (c *Controller) ApplyNoteStyleFor(id string, style model.NoteStyle) error {
 	if n == nil {
 		c.mu.Unlock()
 		return fmt.Errorf("便签不存在: %s", id)
-	}
-	if n.rec.Slot >= 1 {
-		// 辅助便签禁用样式锁：底色唯一来源 = 槽位色设置（纵深防御，
-		// 前端已隐藏入口，design §8）
-		c.mu.Unlock()
-		return fmt.Errorf("辅助便签底色由「辅助便签颜色」统一设置")
 	}
 	if n.rec.Style == nil {
 		c.mu.Unlock()
@@ -536,7 +606,7 @@ func removeNote(ns []*NoteLive, id string) []*NoteLive {
 // ── 设置与导入 ──────────────────────────────────────────────────────────
 
 // ApplySettings 设置改动实时生效：更新内存态并向每张便签窗重新注水
-//（对应 bugzia NOTE_SETTINGS 广播语义）。生效样式按便签计算——锁定便签
+// （对应 bugzia NOTE_SETTINGS 广播语义）。生效样式按便签计算——锁定便签
 // 豁免全局改动（锁模型）。落盘由设置窗口负责。
 func (c *Controller) ApplySettings(s model.Settings) {
 	c.store.SetSettings(s)
@@ -561,11 +631,14 @@ func (c *Controller) ImportRecords(recs []model.NoteRecord) int {
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].UpdatedAt > sorted[j].UpdatedAt })
 	added := 0
 	for i, rec := range sorted {
-		if i >= model.MaxNotes {
-			c.Notify("bugzia-notes", "便笺已达上限（6），其余未导入")
+		if i >= model.SlotCount {
+			c.Notify("bugzia-notes", fmt.Sprintf("便笺已达上限（%d），其余未导入", model.SlotCount))
 			break
 		}
 		rec.Slot = i
+		if rec.Title == "" {
+			rec.Title = c.nextDefaultTitle()
+		}
 		c.openRecord(rec, rec.X == model.SentinelCoord || rec.Y == model.SentinelCoord, false)
 		added++
 	}

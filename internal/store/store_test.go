@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,6 +205,9 @@ func TestLoadNotesV1MigratesLatestToMain(t *testing.T) {
 	if got[0].X != 30 || got[0].Y != 40 || got[0].Content != "newest" {
 		t.Fatalf("字段应全保留: %+v", got[0])
 	}
+	if got[0].Title != "便签1" {
+		t.Fatalf("v1 直迁应补默认标题: %+v", got[0])
+	}
 	matches, _ := filepath.Glob(filepath.Join(dir, "notes.json.bak-*"))
 	if len(matches) != 1 {
 		t.Fatalf("应有一个备份文件: %v", matches)
@@ -277,5 +281,49 @@ func TestLoadSettingsV2TrustsFileValues(t *testing.T) {
 	}
 	if got.AuxColors[4] != (model.NoteColor{R: 13, G: 14, B: 15}) {
 		t.Fatalf("v2 五色应信任文件: %+v", got.AuxColors)
+	}
+}
+
+func TestLoadNotesV2AssignsDefaultTitles(t *testing.T) {
+	s := newTestStore(t)
+	a, b := rec("a", true), rec("b", true)
+	b.Title = "购物清单"
+	data, err := json.MarshalIndent(map[string]any{"version": 2, "notes": []model.NoteRecord{a, b}}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.NotesPath(), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := s.LoadNotes()
+	if got[0].Title != "便签1" {
+		t.Fatalf("空标题应按序补默认: %+v", got[0])
+	}
+	if got[1].Title != "购物清单" {
+		t.Fatalf("已有标题应保留并参与占用判定: %+v", got[1])
+	}
+	raw, _ := os.ReadFile(s.NotesPath())
+	if !strings.Contains(string(raw), `"version": 3`) {
+		t.Fatalf("v2 加载后应就地重写为 v3: %s", raw)
+	}
+	if again := s.LoadNotes(); again[0].Title != "便签1" || again[1].Title != "购物清单" {
+		t.Fatalf("二次加载应幂等: %+v", again)
+	}
+}
+
+func TestLoadNotesV3EmptyTitleFilledInMemory(t *testing.T) {
+	s := newTestStore(t)
+	a := rec("a", true)
+	a.Title = ""
+	data, err := json.MarshalIndent(map[string]any{"version": 3, "notes": []model.NoteRecord{a}}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.NotesPath(), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := s.LoadNotes()
+	if got[0].Title != "便签1" {
+		t.Fatalf("v3 空标题应内存补默认: %+v", got[0])
 	}
 }

@@ -34,7 +34,7 @@ export class HotkeySettings {
         }
         if (!("main" in $$source)) {
             /**
-             * 主便签召唤
+             * 新建自由便签（v2.1.0 起不再是主便签切换）
              * @member
              * @type {string}
              */

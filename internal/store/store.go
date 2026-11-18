@@ -19,6 +19,8 @@ const (
 	notesFileName    = "notes.json"
 	settingsFileName = "settings.json"
 	recycleFileName  = "recycle.json"
+	// notesFileVersion notes.json 当前版本（v3：NoteRecord 增加标题字段）。
+	notesFileVersion = 3
 	// SaveDelay 便签持久化防抖时长（与 bugzia 一致）。
 	SaveDelay = 400 * time.Millisecond
 )
@@ -89,18 +91,45 @@ func (s *Store) LoadNotes() []model.NoteRecord {
 			return nil
 		}
 	}
-	if f.Version >= 2 {
-		return f.Notes
+	if f.Version >= notesFileVersion {
+		return defaultTitles(f.Notes)
 	}
-	return s.migrateNotesToV2(f.Notes)
+	if f.Version == 2 {
+		// v2 → v3：补标题（纯增量迁移），就地以 v3 重写（atomic 原子写，
+		// 不做备份改名——v2 文件本身可回读，无丢文件窗口）；失败仅记日志。
+		out := defaultTitles(f.Notes)
+		if err := s.writeNotes(out); err != nil {
+			log.Printf("[store] notes.json v3 重写失败（内存已生效，稍后防抖补写）: %v", err)
+		}
+		return out
+	}
+	return s.migrateNotesToV3(f.Notes)
 }
 
-// migrateNotesToV2 v1 → v2 槽位模型升级：最新更新的自由便签升级为主便签
-//（Slot=0，字段全保留），其余不加载；原文件改名备份留存后立即以 v2 落盘
-//（docs/project/便签/2026-11-18-slot-model-design.md §5.1）。
+// defaultTitles 为空标题记录按序补默认「便签n」（幂等：已有标题参与占用
+// 判定；第 i 个空标题记录从 i+1 起试）。直接改入参切片并返回。
+func defaultTitles(notes []model.NoteRecord) []model.NoteRecord {
+	taken := map[string]bool{}
+	for i := range notes {
+		if notes[i].Title != "" {
+			taken[notes[i].Title] = true
+		}
+	}
+	for i := range notes {
+		if notes[i].Title == "" {
+			notes[i].Title = model.NextDefaultTitle(taken, i+1)
+			taken[notes[i].Title] = true
+		}
+	}
+	return notes
+}
+
+// migrateNotesToV3 v1 → v3 升级：最新更新的自由便签升级为主便签（Slot=0，
+// 字段全保留），其余不加载；原文件改名备份留存后立即以 v3 落盘
+// （v1→v2 原迁移逻辑 + v3 标题，见 2026-11-18-v2.1.0-free-notes-title-design.md §5.1）。
 // 改名失败：原文件不动、按空表启动（防半迁移态，下次启动重试）；
-// v2 重写失败仅记日志（内存已是 v2 语义，后续防抖保存补写）。
-func (s *Store) migrateNotesToV2(notes []model.NoteRecord) []model.NoteRecord {
+// v3 重写失败仅记日志（内存已是 v3 语义，后续防抖保存补写）。
+func (s *Store) migrateNotesToV3(notes []model.NoteRecord) []model.NoteRecord {
 	if len(notes) == 0 {
 		return nil
 	}
@@ -121,9 +150,9 @@ func (s *Store) migrateNotesToV2(notes []model.NoteRecord) []model.NoteRecord {
 	}
 	main := notes[latest]
 	main.Slot = model.SlotMain
-	out := []model.NoteRecord{main}
+	out := defaultTitles([]model.NoteRecord{main})
 	if err := s.writeNotes(out); err != nil {
-		log.Printf("[store] notes.json v2 重写失败（内存已生效，稍后防抖补写）: %v", err)
+		log.Printf("[store] notes.json v3 重写失败（内存已生效，稍后防抖补写）: %v", err)
 	}
 	return out
 }
@@ -176,7 +205,7 @@ func (s *Store) SaveNotesNow(notes []model.NoteRecord) error {
 }
 
 func (s *Store) writeNotes(notes []model.NoteRecord) error {
-	f := notesFile{Version: 2, Notes: notes}
+	f := notesFile{Version: notesFileVersion, Notes: notes}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err

@@ -39,3 +39,27 @@ func TestEffectiveStyleMainFollowsGlobal(t *testing.T) {
 		t.Fatalf("主便签未锁定应完全跟随全局: got %+v want %+v", got, want)
 	}
 }
+
+func TestEffectiveStyleAuxLockBeatsSlotColor(t *testing.T) {
+	s := model.DefaultSettings()
+	rec := model.NoteRecord{Slot: 2}
+	rec.Style = &model.NoteStyle{BgR: 10, BgG: 20, BgB: 30, BgAlpha: 0.8, Radius: 4, FontSize: 12}
+	if got := EffectiveStyle(rec, s); got != *rec.Style {
+		t.Fatalf("辅助锁定应完全用快照（越过槽位色）: %+v", got)
+	}
+	rec.Style = nil
+	got := EffectiveStyle(rec, s)
+	want := s.AuxColors[1]
+	if got.BgR != want.R || got.BgG != want.G || got.BgB != want.B {
+		t.Fatalf("辅助解锁应回槽位色: %+v want %v", got, want)
+	}
+}
+
+func TestEffectiveStyleFreeFollowsGlobal(t *testing.T) {
+	s := model.DefaultSettings()
+	rec := model.NoteRecord{Slot: model.SlotFree}
+	got := EffectiveStyle(rec, s)
+	if got.BgR != s.Note.BgR || got.BgG != s.Note.BgG || got.BgB != s.Note.BgB {
+		t.Fatalf("自由便签未锁应跟随全局默认: %+v", got)
+	}
+}
