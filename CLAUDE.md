@@ -67,7 +67,7 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 - 召唤语义：判断展开态只认「pinned 且可见」；召唤时把所有 unpinned 升级为 pinned（否则沉底便签被盖住看不见，`alt+n` 会在显隐间空转）
 - notes.json 沿用 bugzia `NoteRecord` 形状并扩展（新增 `created_at`/`updated_at`/`style`），解析容忍未知字段，升级不破老数据
 - 便签上限 50 张（`model.MaxNotes`），达到上限经 `Notify` 提示（v1 落日志）
-- 数据目录 `%APPDATA%\bugzia-notes\`（经 `os.UserConfigDir()` 拼接）；与 bugzia 数据互不读写，只提供一次性迁移：钉住便签 + 便签样式 + 便签三键（bugzia 的 summon 不迁移）；本应用无 settings.json 且检测到 bugzia 配置时首启自动迁移
+- 数据目录 = exe 同目录 `data\`（便携式，不占 C 盘；`go run` 时 exe 在 Go 临时构建目录，回退用工作目录 `data\`）；首启自动把旧版 `%APPDATA%\bugzia-notes\` 的 notes.json/settings.json 迁移过来并清理旧目录（`migrateLegacyData`）；与 bugzia 数据互不读写，只提供一次性迁移：钉住便签 + 便签样式 + 便签三键（bugzia 的 summon 不迁移）；本应用无 settings.json 且检测到 bugzia 配置时首启自动迁移
 - 全局快捷键三键（默认从 bugzia 配置迁移，如 bugzia 无配置则 `alt+n` / `alt+shift+c` / `alt+z`）：集合切换、直接新建、销毁当前（= 最近新建/编辑那张，回退列表最后一张，带 Y/N 确认）
 - 托盘常驻；关闭全部便签窗口应用不退出（Wails 托盘模式，spike 已验证），托盘「退出」才真正结束；单实例用命名 mutex（`internal/instance`）
 

@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -32,7 +33,9 @@ var assets embed.FS
 func main() {
 	instance.AcquireOrExit() // 二次启动：弹提示后退出
 
-	st, err := store.New(configDir())
+	dir := configDir()
+	migrateLegacyDataDir(dir)
+	st, err := store.New(dir)
 	if err != nil {
 		log.Fatalf("初始化存储失败: %v", err)
 	}
@@ -421,10 +424,92 @@ func (o *wailsOps) PrimaryScreen() (float32, float32) {
 	return winutil.PrimaryScreenLogical()
 }
 
+// configDir 数据目录：exe 同目录的 data\（便携式，数据不占 C 盘）。
+// go run / go test 时 exe 在 Go 工具链临时构建目录里，此时回退用工作目录
+// 的 data\，使开发运行与正式运行共用项目内同一份数据。
 func configDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		log.Fatalf("无法确定可执行文件路径: %v", err)
+	}
+	exeDir := filepath.Dir(exe)
+	if underGoBuildTmp(exeDir) {
+		if wd, werr := os.Getwd(); werr == nil {
+			return filepath.Join(wd, "data")
+		}
+	}
+	return filepath.Join(exeDir, "data")
+}
+
+// underGoBuildTmp 判断目录是否位于系统临时目录下的 go-build* 内
+//（go 工具链 go run / go test 的临时构建产物所在）。
+func underGoBuildTmp(dir string) bool {
+	tmp := os.TempDir()
+	if tmp == "" {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(tmp), filepath.Clean(dir))
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	return strings.Contains(filepath.ToSlash(rel), "go-build")
+}
+
+// legacyConfigDir 旧版数据目录（v1 的 %APPDATA%\bugzia-notes）。
+func legacyConfigDir() string {
 	dir, err := os.UserConfigDir()
 	if err != nil {
-		log.Fatalf("无法确定配置目录: %v", err)
+		return ""
 	}
 	return filepath.Join(dir, "bugzia-notes")
+}
+
+// migrateLegacyDataDir 一次性迁移入口：旧位置 = v1 的 %APPDATA%\bugzia-notes。
+func migrateLegacyDataDir(newDir string) {
+	migrateLegacyData(newDir, legacyConfigDir())
+}
+
+// migrateLegacyData 一次性迁移：旧位置有而新位置缺的 notes.json /
+// settings.json 复制过来，随后清理旧目录（数据不再占 C 盘）。
+// 幂等：新位置已有的文件以新为准；旧目录不存在则无事发生；清理失败
+// 留待下次启动重试。
+func migrateLegacyData(newDir, legacy string) {
+	if legacy == "" || strings.EqualFold(filepath.Clean(legacy), filepath.Clean(newDir)) {
+		return
+	}
+	if _, err := os.ReadDir(legacy); err != nil {
+		return // 旧目录不存在/不可读，无事可做
+	}
+	if err := os.MkdirAll(newDir, 0o755); err != nil {
+		log.Printf("[migrate] 创建数据目录失败: %v", err)
+		return
+	}
+	for _, name := range []string{"notes.json", "settings.json"} {
+		dst := filepath.Join(newDir, name)
+		if _, err := os.Stat(dst); err == nil {
+			continue // 新位置已有，以新为准
+		}
+		data, err := os.ReadFile(filepath.Join(legacy, name))
+		if err != nil {
+			continue // 旧位置也没有这份文件
+		}
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			log.Printf("[migrate] 写入 %s 失败: %v", dst, err)
+			continue
+		}
+		log.Printf("[migrate] 已迁移 %s -> %s", filepath.Join(legacy, name), dst)
+	}
+	for _, name := range []string{"notes.json", "settings.json"} {
+		if _, err := os.Stat(filepath.Join(newDir, name)); err != nil {
+			continue // 新位置没有这份文件，不能删旧副本
+		}
+		if err := os.Remove(filepath.Join(legacy, name)); err != nil && !os.IsNotExist(err) {
+			log.Printf("[migrate] 清理旧数据 %s 失败: %v", name, err)
+			return
+		}
+	}
+	// 仅当旧目录已空才会成功；残留杂物时留目录不动
+	if err := os.Remove(legacy); err == nil {
+		log.Printf("[migrate] 旧数据目录已删除: %s", legacy)
+	}
 }
