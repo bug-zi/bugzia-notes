@@ -74,7 +74,9 @@ body {
 
 .note-btn.pin.active {
   background: rgba(255, 255, 255, 0.85);
-  color: #9e1b32;
+  /* 辅助便签由 note.js 注入 --note-pin-ink = 槽位色（字色与底色同源）；
+     主便签不注入，回落玫红系深红 */
+  color: var(--note-pin-ink, #9e1b32);
   border-color: rgba(255, 255, 255, 0.9);
   font-weight: 600;
 }

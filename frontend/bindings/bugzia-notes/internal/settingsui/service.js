@@ -28,7 +28,7 @@ export function ApplyAuxColors(colors) {
 /**
  * ApplyHotkeys 解析三条键位并重绑（留空=禁用）。逐键注册：被系统/其他
  * 程序占用的键跳过并在 conflicts 中报告（其余照常生效）。成功后落盘。
- * 返回 {conflicts: ["集合切换(alt+z)"...], error?}。
+ * 返回 {conflicts: ["主便签切换(alt+z)"...], error?}。
  * @param {model$0.HotkeySettings} hs
  * @returns {$CancellablePromise<{ [_ in string]?: any }>}
  */

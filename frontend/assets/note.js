@@ -38,6 +38,7 @@ let locked = false;     // rec.Style != nil（Go 侧 hydrate 载荷带 locked）
 let panelOpen = false;
 let curStyle = null;    // 最近一次生效样式（面板打开时回填表单）
 let applying = false;   // 防重入
+let slot = 0;           // 槽位：0=主便签，1~5=辅助（hydrate 载荷带 slot）
 const NS = "bugzia-notes/internal/settingsui.Service.";
 
 /* ── 注水 ─────────────────────────────────────────────────────────── */
@@ -48,7 +49,7 @@ const NS = "bugzia-notes/internal/settingsui.Service.";
 wails.Events.On("note:hydrate", (ev) => {
   const data = ev && ev.data;
   if (!data || data.id !== id) return; // 只认发给自己的（防串台）
-  const slot = data.slot ?? 0;
+  slot = data.slot ?? 0;
   btnStyle.hidden = slot >= 1; // 辅助便签禁用样式锁：底色由槽位色统一设置
   if (slot >= 1 && panelOpen) closePanel();
   applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked);
@@ -96,6 +97,14 @@ function applyStyle(s) {
   );
   root.style.setProperty("--note-radius", (s.radius ?? 10) + "px");
   root.style.setProperty("--note-font", (s.font_size ?? 14) + "px");
+  // 辅助便签「已钉住」字色 = 底色（槽位色，EffectiveStyle 已算进 bg_*）；
+  // 主便签不设置，CSS 回落深红 #9e1b32
+  if (slot >= 1) {
+    root.style.setProperty(
+      "--note-pin-ink",
+      `rgb(${s.bg_r ?? 201}, ${s.bg_g ?? 88}, ${s.bg_b ?? 119})`
+    );
+  }
 }
 
 function render() {

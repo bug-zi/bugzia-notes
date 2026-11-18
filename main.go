@@ -145,9 +145,9 @@ func launchSilent(args []string) bool {
 
 func dispatchHotkey(ctl *wm.Controller, id int) {
 	switch id {
-	case hotkey.IDToggle:
-		ctl.ToggleNotes()
-	case hotkey.IDMain:
+	// 2.0.1 起「集合切换」收窄为主便签切换：只切主便签，不干涉辅助便签，
+	// 与主便签键同语义；两个键位槽保留，兼容已有键位配置（如 alt+c / alt+shift+c）。
+	case hotkey.IDToggle, hotkey.IDMain:
 		ctl.ToggleSlot(model.SlotMain)
 	case hotkey.IDKill:
 		ctl.DestroyCurrent()

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 bugzia-notes — Windows 便签桌面应用（Go + Wails v3），把 Bugzia 桌面助手（参考实现在 `D:\Code\自创项目\bugzia桌面助手`，Tauri v2 + React）中的便签功能抽成独立应用。
 
-**当前状态**：v1 已实现并通过 P0 验证（spec §13.3）。首版技术栈 Fyne 经 spike 实测缺失关键能力（透明/原生拖动/IME 定位），已于 2026-11-16 改判 **Wails v3**（Go 后端 + WebView2 前端，原生多窗口/托盘）。权威设计文档（已归档）：`docs/project/全局/archive/2026-11-16-bugzia-notes-app-design.md`；实现计划：`docs/project/全局/archive/2026-11-16-bugzia-notes-v2-wails-plan.md`。开机自启动与静默启动已落地（2026-11-17，spec/plan 见 `docs/project/全局/archive/`，自启动走 HKCU Run 键 + `--silent`，`internal/autostart`）。**v2.0.0 槽位模型已落地（2026-11-18，1 主 + 5 辅固定槽位、六键统一切换、辅助五色）**，spec/plan 见 `docs/project/便签/2026-11-18-slot-model-{design,plan}.md`，手测闸口见 plan Task 12（全部通过后归档）。
+**当前状态**：v1 已实现并通过 P0 验证（spec §13.3）。首版技术栈 Fyne 经 spike 实测缺失关键能力（透明/原生拖动/IME 定位），已于 2026-11-16 改判 **Wails v3**（Go 后端 + WebView2 前端，原生多窗口/托盘）。权威设计文档（已归档）：`docs/project/全局/archive/2026-11-16-bugzia-notes-app-design.md`；实现计划：`docs/project/全局/archive/2026-11-16-bugzia-notes-v2-wails-plan.md`。开机自启动与静默启动已落地（2026-11-17，spec/plan 见 `docs/project/全局/archive/`，自启动走 HKCU Run 键 + `--silent`，`internal/autostart`）。**v2.0.0 槽位模型已落地（2026-11-18，1 主 + 5 辅固定槽位、六键统一切换、辅助五色）**，spec/plan 见 `docs/project/便签/2026-11-18-slot-model-{design,plan}.md`，手测闸口见 plan Task 12（全部通过后归档）。**v2.0.1（2026-11-18）：主便签切换键收窄（只切主便签，不干涉辅助便签；原全显/全隐集合切换删除）+ 辅助便签「已钉住」字色与其底色（槽位色）一致。**
 
 ## 文档体系与维护权责（最重要）
 
@@ -68,12 +68,12 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 - 双层模型：钉住 = `WebviewWindow.SetAlwaysOnTop(true)`；未钉 = `SetAlwaysOnTop(false)` + Win32 `SetWindowPos(HWND_BOTTOM)` 沉底（`internal/winutil.SetBottom`），统一入口 `wailsOps.applyLayer`
 - 全量持久化：所有便签（含未钉）创建即落盘、重启恢复；`pinned` 只决定层级（2026-11-17 设计变更）
 - x/y = -1 哨兵表示「未被用户放置」，走 `packTopLeft` 贪心装箱定位（从 bugzia `noteWindow.ts` 移植，PLACE_MARGIN 8）；装箱避让读兄弟便签的最近实际摆放位置（`NoteLive.px/py`）；rec.X/Y 只在用户拖动（`NoteMoved`）时写入——程序性摆放不写回，保持哨兵语义
-- 集合切换（`alt+n`）语义：判断展开态只认「pinned 且可见」；召唤时把所有 unpinned 升级为 pinned（否则沉底便签被盖住看不见，`alt+n` 会在显隐间空转）
+- 主便签切换键（原「集合切换」，2.0.1 收窄）：只切主便签（`ToggleSlot(SlotMain)`），**不干涉辅助便签**；与主便签键同语义、两个键位槽保留兼容已有配置（用户实际配置常为 toggle=alt+c / main=alt+shift+c）；旧的全显/全隐召唤语义（unpinned 升级 pinned 等）已随 `ToggleNotes/summonAll/HideAll` 删除
 - **6 槽位模型（2026-11-18，全面取代自由列表）**：`NoteRecord.Slot`（0=主便签，1~5=辅助便签，`model.MaxNotes=6` 每槽至多一张）；六键统一切换式 `Controller.ToggleSlot(slot)`——槽位无便签→创建（即钉住、装箱定位）并显示聚焦成为当前便签，隐藏→显示聚焦，已显示→隐藏；启动恢复（`startRestore`）时无 Slot=0 记录自动补建主便签（全新安装/销毁后重启统一覆盖）；托盘「召唤主便签」同入口
-- 辅助便签底色 = 槽位色设置（`Settings.AuxColors [5]NoteColor`，默认五色与玫红同源：雾蓝 #5A7FA8 / 苔绿 #5E8656 / 藤紫 #8B6FA8 / 琥珀 #A0743A / 青灰 #3F8680，设置窗口取色器可改，实时生效）；样式锁仅主便签可用（`EffectiveStyle` 优先级：锁 > 槽位色 > 全局；辅助便签控制器拒绝加锁、前端隐藏入口）
+- 辅助便签底色 = 槽位色设置（`Settings.AuxColors [5]NoteColor`，默认五色与玫红同源：雾蓝 #5A7FA8 / 苔绿 #5E8656 / 藤紫 #8B6FA8 / 琥珀 #A0743A / 青灰 #3F8680，设置窗口取色器可改，实时生效）；样式锁仅主便签可用（`EffectiveStyle` 优先级：锁 > 槽位色 > 全局；辅助便签控制器拒绝加锁、前端隐藏入口）；辅助便签「已钉住」按钮字色 = 槽位色（前端 `--note-pin-ink`，note.js 注水注入；主便签回落深红 #9e1b32）
 - notes.json / settings.json 均为 v2 形状（version 字段判定）：notes v2 记录带 `slot`；settings v2 键位含 `main`/`aux1`~`aux5` + `aux_colors`。v1 读时自动迁移（幂等）：notes 取 `UpdatedAt` 最新一张→主便签、其余不加载，原文件改名 `notes.json.bak-*` 留存；settings 的 `create` 键继承给 `main`（空=禁用也尊重）、辅助键与五色填默认；v2 完全信任文件值（留空=禁用不再补默认）
 - 数据目录 = exe 同目录 `data\`（便携式，不占 C 盘；`go run` 时 exe 在 Go 临时构建目录，回退用工作目录 `data\`）；首启自动把旧版 `%APPDATA%\bugzia-notes\` 的 notes.json/settings.json 迁移过来并清理旧目录（`migrateLegacyData`）；与 bugzia 数据互不读写，只提供一次性迁移：钉住便签 + 便签样式 + 便签三键（bugzia 的 note_create→主便签键；summon 不迁移）；本应用无 settings.json 且检测到 bugzia 配置时首启自动迁移
-- 全局快捷键八键（默认 `alt+n` 集合切换 / `alt+c` 主便签 / `alt+z` 销毁当前 / `alt+1`~`alt+5` 辅助 1~5；`hotkey.IDToggle/IDMain/IDKill/IDAux1..5`）；销毁当前 = 最近新建/编辑那张，回退列表最后一张，带 Y/N 确认；逐键注册、被占用键跳过并在设置窗口报告
+- 全局快捷键八键（默认 `alt+n` 主便签切换 / `alt+c` 主便签 / `alt+z` 销毁当前 / `alt+1`~`alt+5` 辅助 1~5；`hotkey.IDToggle/IDMain/IDKill/IDAux1..5`，前两键同语义）；销毁当前 = 最近新建/编辑那张，回退列表最后一张，带 Y/N 确认；逐键注册、被占用键跳过并在设置窗口报告
 - 托盘常驻，菜单「召唤主便签 / 回收站 / 设置 / 退出」（2026-11-18 槽位模型加回主便签入口）；关闭全部便签窗口应用不退出（Wails 托盘模式，spike 已验证），托盘「退出」才真正结束；单实例用命名 mutex（`internal/instance`）
 - 回收站：销毁非空便签时内容自动入站（`ConfirmDestroy` 尾部挂钩，唯一删除入口），`data\recycle.json` 持久化（头插新到旧、上限 100 裁最旧、立即写盘不走防抖、损坏回退空表）；托盘「回收站」开单例窗口（Name="trash"，trash.html）纯查看，数据经 `settingsui.Service.ListRecycle`
 - 更新机制：启动 5s 后检查（`releases.atom`，24h 节流）+ 设置窗口手动检查；确认后下载 `latest/download` 直链 → 独立 cmd 脚本延迟替换（旧 exe 留 `.bak`）→ 重启。**勿改回 `api.github.com` 端点**——匿名 60 次/小时配额在共享代理出口 IP 下极易 403（2026-11-18 实测教训）。替换脚本纯 ASCII、路径走 `%~1/%~2` 传参（中文路径安全）
@@ -95,5 +95,5 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 ## 测试策略
 
 - 纯逻辑单测（go test）：`packTopLeft` 装箱（重叠 / 出屏 / 空屏 / 行满 / 负坐标）、存储原子写与损坏回退、notes/settings v1→v2 槽位迁移、配置迁移解析、防抖合写、快捷键八键解析、控制器 `ToggleSlot` 三态/槽位唯一/启动补建主便签/销毁链/样式三级优先（WindowOps 内存替身）
-- 手测闸口（设计文档第 15 节，全部通过才算交付）：新建→编辑→中文 IME→失焦提交；拖动 / 缩放 / 重启后钉住便签恢复；钉住置顶 / 沉底 / `alt+n` 显隐不空转；销毁确认（按钮 / Y/N / `alt+z`）；复制、上限提示、样式实时生效；配置迁移 / 单实例 / 托盘退出
+- 手测闸口（设计文档第 15 节，全部通过才算交付）：新建→编辑→中文 IME→失焦提交；拖动 / 缩放 / 重启后钉住便签恢复；钉住置顶 / 沉底 / 主便签键显隐且不干涉辅助便签；销毁确认（按钮 / Y/N / `alt+z`）；复制、上限提示、样式实时生效；配置迁移 / 单实例 / 托盘退出
 - 平台只验收 Windows 10/11；代码不写死 Windows（Win32 部分带 `//go:build windows` + 非 Windows 空实现），但不做其他平台适配调优

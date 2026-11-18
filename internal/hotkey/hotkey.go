@@ -22,8 +22,9 @@ const (
 	modWin   = 0x0008 // MOD_WIN
 )
 
-// 键位 id 约定：1=集合切换 2=主便签 3=销毁当前 4~8=辅助便签 1~5
-//（2026-11-18 槽位模型；原 2=IDCreate 改语义为主便签召唤）。
+// 键位 id 约定：1=主便签切换 2=主便签 3=销毁当前 4~8=辅助便签 1~5
+//（2026-11-18 槽位模型；1 号键原「集合切换」2.0.1 起收窄为主便签切换，
+// 只切主便签不干涉辅助便签，与 2 号键同语义，键位槽保留兼容已有配置）。
 const (
 	IDToggle = 1
 	IDMain   = 2
@@ -39,7 +40,7 @@ const (
 func Label(id int) string {
 	switch id {
 	case IDToggle:
-		return "集合切换"
+		return "主便签切换"
 	case IDMain:
 		return "主便签"
 	case IDKill:

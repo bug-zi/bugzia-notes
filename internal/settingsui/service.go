@@ -16,7 +16,7 @@ import (
 )
 
 // Version 应用版本（设置窗口展示）。
-const Version = "v2.0.0"
+const Version = "v2.0.1"
 
 // Service 暴露给前端的服务（Wails 绑定）。
 type Service struct {
@@ -64,7 +64,7 @@ func (s *Service) ApplyNoteStyle(note model.NoteSettings) error {
 
 // ApplyHotkeys 解析三条键位并重绑（留空=禁用）。逐键注册：被系统/其他
 // 程序占用的键跳过并在 conflicts 中报告（其余照常生效）。成功后落盘。
-// 返回 {conflicts: ["集合切换(alt+z)"...], error?}。
+// 返回 {conflicts: ["主便签切换(alt+z)"...], error?}。
 func (s *Service) ApplyHotkeys(hs model.HotkeySettings) map[string]any {
 	binds, err := hotkey.ParseAll(hs)
 	if err != nil {

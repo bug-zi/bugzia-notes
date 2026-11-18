@@ -80,7 +80,7 @@ type NoteSettings struct {
 // HotkeySettings 八条全局快捷键的键位描述（"alt+n" 形式）。
 // Create 为 v1 遗留字段：settings.json v1→v2 升级时继承给 Main，此后不再读写。
 type HotkeySettings struct {
-	Toggle         string `json:"toggle"`          // 集合切换
+	Toggle         string `json:"toggle"`          // 主便签切换（2.0.1 起只切主便签，原集合切换）
 	Create         string `json:"create"`          // v1 遗留（升级时→Main）
 	Main           string `json:"main"`            // 主便签召唤
 	DestroyCurrent string `json:"destroy_current"` // 销毁当前

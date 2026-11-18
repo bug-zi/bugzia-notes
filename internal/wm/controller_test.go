@@ -128,30 +128,27 @@ func TestDestroyCurrentWithoutNotesNotifies(t *testing.T) {
 	}
 }
 
-func TestToggleNotesCreatesWhenEmpty(t *testing.T) {
+func TestToggleMainLeavesAuxUntouched(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.ToggleNotes()
-	if ctl.Count() != 1 || !ctl.AllRecords()[0].Pinned {
-		t.Fatal("空集合切换应新建钉住便签")
-	}
-}
+	ctl.ToggleSlot(model.SlotMain) // 主便签创建并显示
+	ctl.ToggleSlot(1)              // 辅助 1 创建并显示
+	ids := ctl.noteIDs()
+	main, aux := ids[0], ids[1]
 
-func TestToggleNotesHideAndSummonPromotes(t *testing.T) {
-	ctl, _ := newTestController(t)
-	ctl.ToggleSlot(0)
-	ctl.ToggleSlot(1)
-	id := ctl.noteIDs()[1]
-	ctl.setPinnedForTest(id, false) // 造一张未钉便签
-	ctl.ToggleNotes()               // 展开中（有 pinned 且可见）→ 全部隐藏
-	if ctl.visible[id] {
-		t.Fatal("切换后应隐藏")
+	ctl.ToggleSlot(model.SlotMain) // 主便签显示中 → 只隐藏主便签
+	if ctl.visible[main] {
+		t.Fatal("切换应隐藏主便签")
 	}
-	ctl.ToggleNotes() // 召唤 → 升级 + 显示
-	if !ctl.visible[id] {
-		t.Fatal("召唤后应显示")
+	if !ctl.visible[aux] {
+		t.Fatal("切换不得干涉辅助便签（应保持显示）")
 	}
-	if !ctl.AllRecords()[1].Pinned {
-		t.Fatal("召唤应把未钉便签升级为钉住")
+
+	ctl.ToggleSlot(model.SlotMain) // 再切 → 只召回主便签
+	if !ctl.visible[main] {
+		t.Fatal("再切换应显示主便签")
+	}
+	if !ctl.visible[aux] {
+		t.Fatal("辅助便签仍应保持显示")
 	}
 }
 
@@ -277,7 +274,7 @@ func seedPinnedNotes(t *testing.T, n int) string {
 	return dir
 }
 
-func TestStartHiddenThenSummonShowsAll(t *testing.T) {
+func TestStartHiddenThenSummonShowsMain(t *testing.T) {
 	dir := seedPinnedNotes(t, 1)
 	st, err := store.New(dir)
 	if err != nil {
@@ -296,7 +293,7 @@ func TestStartHiddenThenSummonShowsAll(t *testing.T) {
 		t.Fatalf("静默启动后窗口应隐藏: visible=%v hidden=%v", ctl.visible[id], ops.hidden[id])
 	}
 
-	ctl.ToggleNotes() // 召唤：窗口已预建，直接显示（零建窗路径）
+	ctl.ToggleSlot(model.SlotMain) // 召唤：窗口已预建，直接显示（零建窗路径）
 	if !ctl.visible[id] || ops.hidden[id] {
 		t.Fatalf("召唤后应显示: visible=%v hidden=%v", ctl.visible[id], ops.hidden[id])
 	}

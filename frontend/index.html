@@ -26,7 +26,7 @@
 
   <h2>全局快捷键（留空 = 禁用）</h2>
   <div class="row">
-    <label>集合切换 <input id="hk-toggle" placeholder="alt+n"></label>
+    <label>主便签切换 <input id="hk-toggle" placeholder="alt+n"></label>
     <label>主便签 <input id="hk-main" placeholder="alt+c"></label>
     <label>销毁当前 <input id="hk-destroy" placeholder="alt+z"></label>
   </div>
@@ -44,8 +44,9 @@
     <span id="hk-msg" class="msg"></span>
   </div>
   <p class="hint">
-    集合切换：全部便签在「全部显示 / 全部隐藏」之间切换。主便签：常用便签的召唤/隐藏键
-    （首次按下自动创建）。辅助便签 1~5：需要多便签时逐个召唤，各一色，互不相干。
+    主便签切换 / 主便签：只切换主便签的显示/隐藏（首次按下自动创建），
+    不干涉辅助便签；两条键位等效，可按习惯绑定两键。
+    辅助便签 1~5：需要多便签时逐个召唤，各一色，互不相干。
     销毁当前：销毁最近新建或编辑的那张，带确认。
   </p>
 
@@ -69,7 +70,7 @@
     </label>
     <span id="autostart-msg" class="msg"></span>
   </div>
-  <p class="hint">开启后随系统静默启动：仅托盘驻留，按集合切换键召唤便签。</p>
+  <p class="hint">开启后随系统静默启动：仅托盘驻留，按主便签键召唤便签。</p>
 
   <p class="version" id="version"></p>
   <p class="update-row">

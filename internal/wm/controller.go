@@ -424,73 +424,7 @@ func (c *Controller) ApplyNoteStyleFor(id string, style model.NoteStyle) error {
 	return nil
 }
 
-// ── 显隐（alt+n 语义）──────────────────────────────────────────────────
-
-// ToggleNotes 集合切换：无便签 → 召唤主便签；有便签 → 显隐切换。
-// 展开态只认「pinned 且可见」；召唤时把所有 unpinned 升级为 pinned
-//（沉底便签会被应用窗口盖住，不升级用户看不见——bugzia 踩坑结论）。
-func (c *Controller) ToggleNotes() {
-	c.mu.Lock()
-	if len(c.notes) == 0 {
-		c.mu.Unlock()
-		c.ToggleSlot(model.SlotMain)
-		return
-	}
-	visiblePinned := 0
-	for _, n := range c.notes {
-		if n.rec.Pinned && c.visible[n.rec.ID] {
-			visiblePinned++
-		}
-	}
-	c.mu.Unlock()
-
-	if visiblePinned > 0 {
-		c.HideAll()
-		return
-	}
-	c.summonAll()
-}
-
-// HideAll 隐藏全部便签窗口（托盘入口已移除，ToggleNotes 隐藏分支仍用）。
-func (c *Controller) HideAll() { c.hideAll() }
-
-func (c *Controller) hideAll() {
-	c.mu.Lock()
-	ids := make([]string, 0, len(c.notes))
-	for _, n := range c.notes {
-		ids = append(ids, n.rec.ID)
-	}
-	c.mu.Unlock()
-	for _, id := range ids {
-		c.hideNote(id)
-	}
-}
-
-func (c *Controller) summonAll() {
-	c.mu.Lock()
-	ids := make([]string, 0, len(c.notes))
-	changed := false
-	for _, n := range c.notes {
-		ids = append(ids, n.rec.ID)
-		if !n.rec.Pinned {
-			n.rec.Pinned = true
-			n.rec.UpdatedAt = time.Now().UnixMilli()
-			changed = true
-		}
-	}
-	c.mu.Unlock()
-	for _, id := range ids {
-		c.mu.Lock()
-		n := c.findLocked(id)
-		pinned := n.rec.Pinned
-		c.mu.Unlock()
-		c.ops.SetPinned(id, pinned)
-		c.showNote(id)
-	}
-	if changed {
-		c.scheduleSave()
-	}
-}
+// ── 显隐 ────────────────────────────────────────────────────────────────
 
 func (c *Controller) showNote(id string) {
 	c.mu.Lock()

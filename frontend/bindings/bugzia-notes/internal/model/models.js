@@ -18,7 +18,7 @@ export class HotkeySettings {
     constructor($$source = {}) {
         if (!("toggle" in $$source)) {
             /**
-             * 集合切换
+             * 主便签切换（2.0.1 起只切主便签，原集合切换）
              * @member
              * @type {string}
              */
