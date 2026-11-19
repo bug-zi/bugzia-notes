@@ -18,6 +18,8 @@ bugzia-notes — Windows 便签桌面应用（Go + Wails v3），把 Bugzia 桌�
 
 **v3.1.0（2026-11-19，已验收）：拖拽挤开——拖动/缩放便签 A 压到可见便签时对方实时被挤开（手势会话 50ms 采样 + 记账兜底，与召唤弹开共用同一 `pushPass`），确保便签永不重叠。** spec/plan 见 `docs/project/便签/archive/2026-11-19-v3.1.0-drag-push-away-{design,plan}.md`（已归档）。
 
+**v3.2.0（2026-11-19，已验收）：挤开防抖（满屏熔断）——桌面空闲时无限实时挤开（v3.1.0 手感）；手势内首次出现「四向弹开+装箱兜底全部无解（接受重叠）」即熔断（桌面塞不下的结构性见证，非启发式阈值），此后本手势静止、允许覆盖；`BeginDragSession` 手势开始重置重新评估。** spec/plan 见 `docs/project/便签/archive/2026-11-19-v3.2.0-packed-freeze-{design,plan}.md`（已归档）。
+
 ## 文档体系与维护权责（最重要）
 
 `docs/` 目录是开发者与 AI 共同维护的项目文档库（2026-11-17 搭建，旧 superpowers 文档已迁入），权责划分如下：
@@ -82,6 +84,7 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 - **新建便签键（`main` 键，v2.1.0 回归）**：`CreateOrSummonFree`——有隐藏自由便签先召唤 UpdatedAt 最大的一张（覆盖静默启动恢复），否则新建一张自由便签（即钉住、装箱定位、聚焦、成为当前便签）；连按连建
 - **召唤弹开式避重叠（v3.0.0，`summonNote` 原位落地 + `pushPass`）**：几何全用实时值（位置 px/py 优先、rec.X/Y 兜底，尺寸 rw/rh 实时优先、ClampW/H(rec.W/H) 兜底——v3.1.0 起；`rectsIntersect` 判交，隐藏便签不占桌面）；召唤便签**原位落地绝不自己位移**，与之重叠的可见便签被弹开——右/下/左/上迭代越过已落地矩形取最小位移（平手偏右/下、`pushGap`=8 间隙、完整在屏内），四向不可行→装箱找空位，屏幕满→接受重叠（置顶由钉住 TOPMOST+Focus 保证）；级联自动传导（被弹者落点撞未处理便签→继续弹，每张至多一次）；连召批次按 **UpdatedAt 升序**逐张落地，最活跃者最后落地必保原位；`WindowOps.GlideNote` 动画纯视觉追赶（**状态先写**：px/py + placed 补写 rec.X/Y（哨兵不动）、不刷 UpdatedAt，整趟一次防抖落盘；250ms easeOutCubic、16ms 步进、40ms 错峰、同窗口取旧起新）；`suppressMove` 标记归动画持有者（事件回调只读、animMu 护 map、SetPosition 严禁持锁调用防 InvokeSync 死锁）；`alt+z` 销毁确认显示不走避让
 - **拖拽挤开（v3.1.0，`DragLiveTick` + 手势会话采样）**：拖动/缩放手势会话四事件全订阅（`WindowStartMove/EndMove`、`WindowStartResize/EndResize`——探针实测 Frameless 手势 Start 恒为 StartMove、End 恒为 EndResize，wails 以左键状态启发式判定，故任一 Start 起采样、任一 End 停）；采样 goroutine 每 50ms 读窗口实时几何（`wailsOps.dragSessions`，同窗口取旧起新，End/窗口消失双保险退出，读几何在锁外不与控制器锁叠加）→ `DragLiveTick` **只写实时几何**（px/py + rw/rh；不写 rec、不刷 UpdatedAt、不落盘——权威记账归松手后的 NoteMoved/NoteResized）→ 复用 `pushPass` 实时弹开；参与不分钉住、隐藏不参与；`NoteMoved/NoteResized` 记账后补弹开趟兜底（松手残留重叠 / 拖动中停顿 / Win+方向键键盘移动——不走会话事件）；`pushPass` 返回弹开张数、日志上移到 `summonNote`（拖动 20Hz 采样路径不打日志防刷屏）；`NoteResized` 记账时清零 rw/rh 回退 rec 值
+- **挤开满屏熔断（v3.2.0，`dragPacked`）**：桌面空闲时无限实时挤开（可重复弹开，推实物手感）；`pushPass(self, trackPacked)`——`dragPacked` 已置位则直接返回 0（不做任何解析与移动）；本趟出现「接受重叠」（四向弹开+装箱兜底对某便签全部无解 = 桌面塞不下的结构性见证）即置位 `dragPacked`，**置位须在 `len(pushes)==0` 早退之前**（全员接受重叠 0 弹开也要记）；此后本手势静止、允许覆盖；`BeginDragSession` 手势开始重置重新评估；松手兜底同受熔断约束；召唤路径 `trackPacked=false` 不读不写标记（单次动作天然有界）
 - **自由便签（v2.1.0）**：`NoteRecord.Slot = model.SlotFree(-1)`，与槽位便签同列表同存储；无专属显隐键（静默启动恢复的靠新建键召唤，其余常显）；未锁定样式 = 全局默认（玫红）
 - **总量上限 20（v2.1.0，`model.MaxNotes`）**：槽位便签 + 自由便签共享；`model.SlotCount=6` 只表达槽位数（`ToggleSlot` 越界、`ImportRecords` 上限用 SlotCount）
 - **便签标题（v2.1.0）**：`NoteRecord.Title`，默认「便签n」（n 从创建后总数起试，重名顺延；`model.NextDefaultTitle`）；显示在便签头部「设置」左侧，双击行内编辑（Enter/失焦提交、Esc 还原、rune 截 30、空白不覆盖），走 `note:renamed` 事件 → `Controller.SetTitle` → 单窗重推 + 防抖落盘；Win32 窗口 Title 仍 = id 不变
@@ -111,6 +114,6 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 
 ## 测试策略
 
-- 纯逻辑单测（go test）：`packTopLeft` 装箱（重叠 / 出屏 / 空屏 / 行满 / 负坐标）、存储原子写与损坏回退、notes v1→v3 / v2→v3 标题迁移、settings v1→v2 迁移、配置迁移解析、防抖合写、快捷键八键解析、控制器 `ToggleSlot` 三态/槽位唯一/启动补建主便签/销毁链/样式三级优先、`ToggleMainSet` 召唤升钉/收起/补建主便签/空集合/辅助隔离/升钉不刷 UpdatedAt、`CreateOrSummonFree` 三态/总量上限 20/默认标题编号顺延/`SetTitle` 守卫、`ResolveOverlaps` 弹开七分支（平手偏右/最小位移/级联/级联链/装箱兜底/屏幕满接受重叠/无重叠不动）、`summonNote` 弹开语义（原位落地/被弹者 glide/负坐标/屏幕满/弹后写 rec 不刷 UpdatedAt）/连召互推活跃度升序、`DragLiveTick` 拖拽挤开（挤开与实时几何记账语义/级联/缩放实时尺寸参与/兄弟实时尺寸/屏幕满接受重叠/`NoteMoved`·`NoteResized` 记账兜底/跨钉层参与；测试尺寸须 ≥ Clamp 最小尺寸，100x100 会被钳到 160x120）（WindowOps 内存替身）
-- 手测闸口（设计文档第 15 节，全部通过才算交付）：新建→编辑→中文 IME→失焦提交；拖动 / 缩放 / 重启后钉住便签恢复；钉住置顶 / 沉底 / 集合切换键召唤收起且不干涉辅助便签；销毁确认（按钮 / Y/N / `alt+z`）；复制、上限提示、样式实时生效；召唤弹开（三入口：动画弹开 / 级联 / 屏幕满置顶）、弹后重启恢复弹后位、缩放尺寸参与弹开；拖拽挤开（拖压弹开不位移 / 级联 / 停顿消解 / 松手兜底 / 缩放挤压 / 键盘贴边兜底 / 屏幕满 / 拖动流畅）；配置迁移 / 单实例 / 托盘退出；更新日志弹窗（单例 / 当前版本高亮）
+- 纯逻辑单测（go test）：`packTopLeft` 装箱（重叠 / 出屏 / 空屏 / 行满 / 负坐标）、存储原子写与损坏回退、notes v1→v3 / v2→v3 标题迁移、settings v1→v2 迁移、配置迁移解析、防抖合写、快捷键八键解析、控制器 `ToggleSlot` 三态/槽位唯一/启动补建主便签/销毁链/样式三级优先、`ToggleMainSet` 召唤升钉/收起/补建主便签/空集合/辅助隔离/升钉不刷 UpdatedAt、`CreateOrSummonFree` 三态/总量上限 20/默认标题编号顺延/`SetTitle` 守卫、`ResolveOverlaps` 弹开七分支（平手偏右/最小位移/级联/级联链/装箱兜底/屏幕满接受重叠/无重叠不动）+ 双返回值 packed 见证、`summonNote` 弹开语义（原位落地/被弹者 glide/负坐标/屏幕满/弹后写 rec 不刷 UpdatedAt）/连召互推活跃度升序、`DragLiveTick` 拖拽挤开（挤开与实时几何记账语义/级联/缩放实时尺寸参与/兄弟实时尺寸/屏幕满接受重叠/`NoteMoved`·`NoteResized` 记账兜底/跨钉层参与；测试尺寸须 ≥ Clamp 最小尺寸，100x100 会被钳到 160x120）、满屏熔断（冻结/新手势重置/空闲无限追压追弹/召唤不受标记影响）（WindowOps 内存替身）
+- 手测闸口（设计文档第 15 节，全部通过才算交付）：新建→编辑→中文 IME→失焦提交；拖动 / 缩放 / 重启后钉住便签恢复；钉住置顶 / 沉底 / 集合切换键召唤收起且不干涉辅助便签；销毁确认（按钮 / Y/N / `alt+z`）；复制、上限提示、样式实时生效；召唤弹开（三入口：动画弹开 / 级联 / 屏幕满置顶）、弹后重启恢复弹后位、缩放尺寸参与弹开；拖拽挤开（拖压弹开不位移 / 级联 / 停顿消解 / 松手兜底 / 缩放挤压 / 键盘贴边兜底 / 屏幕满 / 拖动流畅）；挤开防抖（空闲连续挤开 / 塞满熔断静止允许覆盖 / 松手无第二轮 / 新手势重评）；配置迁移 / 单实例 / 托盘退出；更新日志弹窗（单例 / 当前版本高亮）
 - 平台只验收 Windows 10/11；代码不写死 Windows（Win32 部分带 `//go:build windows` + 非 Windows 空实现），但不做其他平台适配调优

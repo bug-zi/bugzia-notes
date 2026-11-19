@@ -12,6 +12,9 @@ const textEl = document.getElementById("text");
 const ta = document.getElementById("ta");
 const bodyEl = document.getElementById("body");
 const btnPin = document.getElementById("btn-pin");
+const btnFix = document.getElementById("btn-fix");
+const btnMore = document.getElementById("btn-more");
+const moremenuEl = document.getElementById("moremenu");
 const titleEl = document.getElementById("note-title");
 const titleInput = document.getElementById("title-input");
 const btnCopy = document.getElementById("btn-copy");
@@ -32,6 +35,8 @@ const spFields = {
 
 let content = ""; // 最近提交内容
 let pinned = false;
+let fixed = false;      // 钉住：不受其他便签挤压（v3.3.0）
+let menuOpen = false;   // 更多菜单展开态
 let editing = false;
 let confirming = false;
 let draft = "";
@@ -55,7 +60,7 @@ wails.Events.On("note:hydrate", (ev) => {
   if (!data || data.id !== id) return; // 只认发给自己的（防串台）
   slot = data.slot ?? 0;
   applyTitle(data.title ?? "");
-  applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked);
+  applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked, !!data.fixed);
 });
 
 wails.Events.On("note:destroy-confirm", (ev) => {
@@ -72,17 +77,26 @@ wails.Events.On("note:pinned-sync", (ev) => {
   refreshPinBtn();
 });
 
+wails.Events.On("note:fixed-sync", (ev) => {
+  const data = ev && ev.data;
+  if (!data || data.id !== id) return;
+  fixed = !!data.fixed;
+  refreshFixBtn();
+});
+
 // 挂载即向 Go 请求注水
 wails.Events.Emit("note:ready", { id });
 
-function applyContent(next, nextPinned, settings, nextLocked) {
+function applyContent(next, nextPinned, settings, nextLocked, nextFixed) {
   content = next ?? "";
   pinned = !!nextPinned;
+  fixed = !!nextFixed;
   locked = !!nextLocked;
   curStyle = settings ?? null;
   applyStyle(settings);
   render();
   refreshPinBtn();
+  refreshFixBtn();
   if (panelOpen) syncLockUI(); // 面板开着时跟随重推刷新（锁关=全局被改）
   if (content === "" && !editing) {
     startEdit();
@@ -220,6 +234,10 @@ function cancelEdit() {
 }
 
 bodyEl.addEventListener("click", (e) => {
+  if (menuOpen) { // 先收菜单，不进入编辑（v3.3.0 更多菜单）
+    closeMenu();
+    return;
+  }
   if (!editing && !confirming) {
     const pos = caretIndexAtClick(e);
     startEdit();
@@ -453,6 +471,12 @@ btnPin.addEventListener("click", () => {
   wails.Events.Emit("note:pintoggle", { id });
 });
 
+btnFix.addEventListener("click", () => {
+  fixed = !fixed;
+  refreshFixBtn();
+  wails.Events.Emit("note:fixedtoggle", { id });
+});
+
 btnCopy.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(editing ? ta.value : content);
@@ -469,14 +493,21 @@ btnDestroy.addEventListener("click", () => requestDestroy());
 
 function refreshPinBtn() {
   btnPin.classList.toggle("active", pinned);
-  btnPin.textContent = pinned ? "已钉住" : "钉住";
-  btnPin.title = pinned ? "取消钉住" : "钉住（置顶并保留）";
+  btnPin.textContent = pinned ? "已置顶" : "置顶";
+  btnPin.title = pinned ? "取消置顶" : "置顶（保持在最上层）";
+}
+
+function refreshFixBtn() {
+  btnFix.classList.toggle("active", fixed);
+  btnFix.textContent = fixed ? "已钉住" : "钉住";
+  btnFix.title = fixed ? "取消钉住" : "钉住（不被其他便签挤开）";
 }
 
 /* 销毁确认：先提交草稿，再弹浮层（bugzia 同款） */
 function requestDestroy() {
   commitEdit();
   closePanel();
+  closeMenu();
   if (confirming) return;
   confirming = true;
   confirmEl.hidden = false;
@@ -544,5 +575,47 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     e.stopPropagation();
     exitConfirm();
+  }
+}, true);
+
+/* ── 更多菜单（设置/复制/销毁收纳，v3.3.0）────────────────────────── */
+
+function openMenu() {
+  menuOpen = true;
+  moremenuEl.hidden = false;
+  closePanel(); // 与样式面板互斥
+}
+
+function closeMenu() {
+  menuOpen = false;
+  moremenuEl.hidden = true;
+}
+
+btnMore.addEventListener("click", (e) => {
+  e.stopPropagation(); // 防止 document 级关闭监听立即收掉
+  if (menuOpen) {
+    closeMenu();
+    return;
+  }
+  openMenu();
+});
+
+// 菜单内点击动作后收起菜单（各按钮自身逻辑由既有监听完成）
+btnPin.addEventListener("click", () => closeMenu());
+btnStyle.addEventListener("click", () => closeMenu());
+
+// 点击窗口其他区域收菜单（btnMore 自身已 stopPropagation）
+document.addEventListener("click", (e) => {
+  if (menuOpen && !moremenuEl.contains(e.target) && e.target !== btnMore) {
+    closeMenu();
+  }
+});
+
+// Esc 收菜单（捕获阶段，先于编辑态 Esc 处理）
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && menuOpen) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeMenu();
   }
 }, true);

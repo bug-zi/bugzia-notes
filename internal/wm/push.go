@@ -12,8 +12,9 @@ const (
 // PushNote 一张候选被弹便签的输入（实时几何：px/py + 实时尺寸 rw/rh 优先、
 // rec Clamp 值回退）。
 type PushNote struct {
-	ID   string
-	Rect Rect
+	ID    string
+	Rect  Rect
+	Fixed bool // 钉住（v3.3.0）：静态障碍，永不被推、不产生 packed 见证
 }
 
 // PushMode 被弹者解析方式。
@@ -32,7 +33,8 @@ type Push struct {
 }
 
 // ResolveOverlaps 召唤/拖拽弹开核心（纯函数）。self 为已落地便签矩形；notes 为
-// 其余全部可见便签（实时几何，皆可推）。与「已落地矩形集」相交的便签被弹开：
+// 其余全部可见便签（实时几何，皆可推）；钉住（Fixed）便签为静态障碍：不被弹开、
+// 不参与级联，其余便签落点避让它。与「已落地矩形集」相交的便签被弹开：
 // 右/下/左/上迭代越过已落地遮挡者（迭代有界），取可行者中位移最小者（平手偏向
 // 右/下——候选按此顺序生成、严格小于才替换），落点留 pushGap 间隙且完整在屏内
 //（PlaceMargin 内缩）；四向均不可行 → 装箱对全部其他便签避让+复核；仍无空位 →
@@ -49,6 +51,16 @@ func ResolveOverlaps(self Rect, notes []PushNote, screenW, screenH float32) (pus
 	}
 	processed := map[string]bool{}
 	out := make([]Push, 0, len(notes))
+
+	// 钉住便签 = 静态障碍：矩形并入 landed（与 self 同等地位，滑移/装箱都避让）、
+	// 直接标记已处理——不进扫描循环，永不被推、失败也不置 packed（塞不下见证
+	// 只来自可推便签，v3.3.0）。
+	for _, n := range notes {
+		if n.Fixed {
+			landed = append(landed, n.Rect)
+			processed[n.ID] = true
+		}
+	}
 
 	for {
 		progressed := false

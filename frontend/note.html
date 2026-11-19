@@ -13,10 +13,14 @@
     <span class="note-title" id="note-title"></span>
     <input type="text" id="title-input" class="note-title-input" maxlength="30" spellcheck="false" hidden>
     <div class="note-actions">
-      <button type="button" id="btn-style" class="note-btn" title="便签样式">设置</button>
-      <button type="button" id="btn-pin" class="note-btn pin" title="钉住（置顶并保留）">钉住</button>
+      <button type="button" id="btn-fix" class="note-btn pin" title="钉住（不被其他便签挤开）">钉住</button>
       <button type="button" id="btn-copy" class="note-btn copy" title="复制内容">复制</button>
-      <button type="button" id="btn-destroy" class="note-btn destroy" title="销毁便笺">销毁</button>
+      <button type="button" id="btn-more" class="note-btn" title="更多操作">更多</button>
+      <div class="note-moremenu" id="moremenu" hidden>
+        <button type="button" id="btn-pin" class="note-btn pin" title="置顶（保持在最上层）">置顶</button>
+        <button type="button" id="btn-style" class="note-btn" title="便签样式">设置</button>
+        <button type="button" id="btn-destroy" class="note-btn destroy" title="销毁便笺">销毁</button>
+      </div>
     </div>
   </div>
   <div class="note-body" id="body">

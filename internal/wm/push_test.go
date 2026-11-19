@@ -115,3 +115,44 @@ func TestResolveNotPackedOnSuccess(t *testing.T) {
 		t.Fatalf("成功弹开不应报告满屏: got %+v packed=%v", got, packed)
 	}
 }
+
+// 钉住便签不被推：重叠对手只有钉住 → 无 Push、无 packed（钉住不产生塞不下见证）。
+func TestResolveSkipsFixedNotes(t *testing.T) {
+	self := Rect{X: 100, Y: 100, W: 100, H: 100}
+	notes := []PushNote{{ID: "f", Rect: Rect{X: 150, Y: 150, W: 100, H: 100}, Fixed: true}}
+	got, packed := ResolveOverlaps(self, notes, 1920, 1080)
+	if len(got) != 0 || packed {
+		t.Fatalf("钉住不应被推也不应触发 packed: got %+v packed=%v", got, packed)
+	}
+}
+
+// 可推便签落点避开钉住矩形：滑移越障迭代越过钉住者（最小位移按避让后落点计）。
+func TestResolveSlideAvoidsFixed(t *testing.T) {
+	self := Rect{X: 8, Y: 8, W: 100, H: 100}
+	notes := []PushNote{
+		{ID: "f", Rect: Rect{X: 150, Y: 58, W: 100, H: 100}, Fixed: true}, // 挡在右移路径上
+		{ID: "b", Rect: Rect{X: 58, Y: 58, W: 100, H: 100}},
+	}
+	got, packed := ResolveOverlaps(self, notes, 1920, 1080)
+	if packed || len(got) != 1 || got[0].ID != "b" {
+		t.Fatalf("应只弹 b: %+v packed=%v", got, packed)
+	}
+	// 右移越障后 dx=200（258-58），下弹 dy=108（166-58）最小 → b 下弹 (58,166)，
+	// 落点与钉住 f(150,58,100,100) 无交
+	if got[0].X != 58 || got[0].Y != 166 {
+		t.Fatalf("b 应避开钉住者下弹 (58,166): %d,%d", got[0].X, got[0].Y)
+	}
+}
+
+// 可推便签被全屏钉住障碍堵死：四向+装箱全无解 → packed=true（塞不下见证，熔断语义不变）。
+func TestResolvePackedWitnessFromPushableBlockedByFixed(t *testing.T) {
+	self := Rect{X: 8, Y: 8, W: 784, H: 584}
+	notes := []PushNote{
+		{ID: "b", Rect: Rect{X: 100, Y: 100, W: 100, H: 100}},
+		{ID: "f", Rect: Rect{X: 8, Y: 8, W: 784, H: 584}, Fixed: true}, // 全屏钉住障碍
+	}
+	got, packed := ResolveOverlaps(self, notes, 800, 600)
+	if len(got) != 0 || !packed {
+		t.Fatalf("被钉住堵死的可推便签无解应报告满屏: got %+v packed=%v", got, packed)
+	}
+}

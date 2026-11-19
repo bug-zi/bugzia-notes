@@ -30,6 +30,7 @@ type fakeOps struct {
 	hydrates       []string
 	hydratedStyles []model.NoteStyle
 	pins           map[string]bool
+	fixes          map[string]bool
 	confirms       []string
 	glides         []glideCall
 }
@@ -39,6 +40,7 @@ func newFakeOps() *fakeOps {
 		hidden: map[string]bool{},
 		closed: map[string]bool{},
 		pins:   map[string]bool{},
+		fixes:  map[string]bool{},
 	}
 }
 
@@ -55,6 +57,8 @@ func (f *fakeOps) Hydrate(id string, rec model.NoteRecord, style model.NoteStyle
 func (f *fakeOps) RequestDestroyConfirm(id string) { f.confirms = append(f.confirms, id) }
 
 func (f *fakeOps) SetPinned(id string, pinned bool) { f.pins[id] = pinned }
+
+func (f *fakeOps) SetFixed(id string, fixed bool) { f.fixes[id] = fixed }
 
 func (f *fakeOps) ShowNote(id string) { f.hidden[id] = false }
 
@@ -1488,5 +1492,93 @@ func TestSummonIgnoresPackedFlag(t *testing.T) {
 	ctl.ToggleSlot(3) // 召唤 d(100,100) 压 b(100,100)——nil 路径不受 dragPacked 影响
 	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 100 || ops.glides[0].y != 328 {
 		t.Fatalf("召唤应照常弹开 b (100,328)（下 dy228 < 右 dx248）: %+v", ops.glides)
+	}
+}
+
+// ToggleFixed 翻转标记 + 通知前端（镜像 TogglePinned）。
+func TestToggleFixed(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	ctl, ops := newTestController(t, a)
+	id := ctl.noteIDs()[0]
+
+	ctl.ToggleFixed(id)
+	if r := recByID(t, ctl, id); !r.Fixed {
+		t.Fatal("ToggleFixed 后应 fixed=true")
+	}
+	if !ops.fixes[id] {
+		t.Fatal("应通知前端 fixed-sync")
+	}
+	ctl.ToggleFixed(id)
+	if r := recByID(t, ctl, id); r.Fixed {
+		t.Fatal("再次 ToggleFixed 应回 false")
+	}
+}
+
+// 拖拽压钉住便签：钉住不动；同场景可推兄弟照常被弹开。
+func TestDragLiveTickFixedSiblingNotPushed(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	f := model.NewRecord("", 240, 220, true)
+	f.Slot = 2
+	f.X, f.Y = 250, 250
+	f.Fixed = true
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 3
+	b.X, b.Y = 250, 250
+	ctl, ops := newTestController(t, a, f, b)
+	ids := ctl.noteIDs()
+	idB := ids[2]
+
+	ctl.DragLiveTick(ids[0], 250, 250, 240, 220)
+	// f 固定不动；b 与 f 完全同位，越障下弹 (250,478)（dy228 < 右 dx248）
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 250 || ops.glides[0].y != 478 {
+		t.Fatalf("应只弹 b (250,478)，钉住 f 不动: %+v", ops.glides)
+	}
+	if x, y := ctl.livePosForTest(ids[1]); x != 250 || y != 250 {
+		t.Fatalf("钉住 f 应保持原位: %d,%d", x, y)
+	}
+}
+
+// 拖动钉住便签自身：它仍是主动方，照常挤开别人（主动拖动是明确意图）。
+func TestDragFixedNoteStillPushes(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	a.Fixed = true
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 250, 150
+	ctl, ops := newTestController(t, a, b)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+
+	ctl.DragLiveTick(idA, 250, 150, 240, 220)
+	// a 固定但为主动方：b 与 a 完全同位 → 下弹 (250,378)（dy228 < 右 dx248）
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 250 || ops.glides[0].y != 378 {
+		t.Fatalf("拖动钉住自身应照常挤开 b (250,378): %+v", ops.glides)
+	}
+}
+
+// 召唤落地压钉住便签：钉住不动、召唤者原位（接受重叠，与其他接受重叠语义一致）。
+func TestSummonAcceptsOverlapWithFixed(t *testing.T) {
+	f := model.NewRecord("", 240, 220, true)
+	f.Slot = 2
+	f.X, f.Y = 100, 100
+	f.Fixed = true
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 3
+	b.X, b.Y = 100, 100
+	ctl, ops := newTestController(t, f, b)
+	idF := ctl.noteIDs()[0]
+
+	ctl.ToggleSlot(2) // 隐藏 f
+	ctl.ToggleSlot(3) // 隐藏 b
+	ctl.ToggleSlot(3) // 召唤 b 原位 (100,100)，与钉住 f 重叠 → 接受重叠
+	if len(ops.glides) != 0 {
+		t.Fatalf("钉住 f 不应被弹开: %+v", ops.glides)
+	}
+	if x, y := ctl.livePosForTest(idF); x != 100 || y != 100 {
+		t.Fatalf("钉住 f 应保持原位: %d,%d", x, y)
 	}
 }

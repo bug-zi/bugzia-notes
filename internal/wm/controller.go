@@ -27,6 +27,9 @@ type WindowOps interface {
 	RequestDestroyConfirm(id string)
 	// SetPinned 层级切换（置顶/沉底）并通知前端同步按钮态。
 	SetPinned(id string, pinned bool)
+	// SetFixed 钉住标记切换（v3.3.0）：通知前端同步按钮态（无窗口层变化——
+	// 钉住只影响挤压解析，不改层级）。
+	SetFixed(id string, fixed bool)
 	ShowNote(id string)
 	HideNote(id string)
 	CloseNote(id string)
@@ -439,7 +442,8 @@ func (c *Controller) summonNote(id string, focus bool) {
 //（召唤路径用于记日志；拖拽/记账兜底路径不打日志，20Hz 采样会刷屏）。
 // trackPacked=true 时受满屏熔断约束（v3.2.0）：dragPacked 已置位则直接返回 0；
 // 本趟出现「接受重叠」（桌面塞不下的见证）则置位 dragPacked，此后本手势静止。
-// false = 无熔断语义（召唤路径，不读不写标记）。
+// false = 无熔断语义（召唤路径，不读不写标记）。钉住便签作为候选带 Fixed 标志
+//（静态障碍）；self 不进候选——主动方（含钉住便签被拖动）无特殊化（v3.3.0）。
 func (c *Controller) pushPass(self *NoteLive, trackPacked bool) int {
 	if trackPacked {
 		c.mu.Lock()
@@ -472,6 +476,7 @@ func (c *Controller) pushPass(self *NoteLive, trackPacked bool) int {
 				X: float32(sx), Y: float32(sy),
 				W: float32(nw), H: float32(nh),
 			},
+			Fixed: n.rec.Fixed,
 		})
 		lives[n.rec.ID] = n
 	}
@@ -652,9 +657,9 @@ func (c *Controller) scheduleSave() {
 	c.store.ScheduleNotesSave(all)
 }
 
-// ── 钉住 ────────────────────────────────────────────────────────────────
+// ── 置顶 / 钉住（Fixed）─────────────────────────────────────────────────
 
-// TogglePinned 钉住/取消钉住：切层级 + 按钮态 + 持久化标记。
+// TogglePinned 置顶切换（原「钉住」，v3.3.0 改名置顶）：切层级 + 按钮态 + 持久化标记。
 func (c *Controller) TogglePinned(id string) {
 	c.mu.Lock()
 	n := c.findLocked(id)
@@ -668,6 +673,25 @@ func (c *Controller) TogglePinned(id string) {
 	c.mu.Unlock()
 
 	c.ops.SetPinned(id, pinned)
+	c.scheduleSave()
+}
+
+// ToggleFixed 钉住切换（v3.3.0）：钉住 = 不受其他便签挤压推动；仍可被用户
+// 拖动/缩放（自己拖动时照常挤开别人）。切标记 + 按钮态 + 持久化，语义与
+// TogglePinned 同款（刷 UpdatedAt）。
+func (c *Controller) ToggleFixed(id string) {
+	c.mu.Lock()
+	n := c.findLocked(id)
+	if n == nil {
+		c.mu.Unlock()
+		return
+	}
+	n.rec.Fixed = !n.rec.Fixed
+	n.rec.UpdatedAt = time.Now().UnixMilli()
+	fixed := n.rec.Fixed
+	c.mu.Unlock()
+
+	c.ops.SetFixed(id, fixed)
 	c.scheduleSave()
 }
 

@@ -327,3 +327,30 @@ func TestLoadNotesV3EmptyTitleFilledInMemory(t *testing.T) {
 		t.Fatalf("v3 空标题应内存补默认: %+v", got[0])
 	}
 }
+
+// v3 记录 round-trip：Fixed 字段持久化保留（钉住，v3.3.0）。
+func TestNotesRoundTripKeepsFixed(t *testing.T) {
+	s := newTestStore(t)
+	recFB := rec("fb", true)
+	recFB.Fixed = true
+	if err := s.SaveNotesNow([]model.NoteRecord{recFB}); err != nil {
+		t.Fatal(err)
+	}
+	got := s.LoadNotes()
+	if len(got) != 1 || !got[0].Fixed {
+		t.Fatalf("fixed 字段应持久化: %+v", got)
+	}
+}
+
+// 旧版写入的 v3 文件没有 fixed 键：读入为 false，不迁移不报错。
+func TestLoadNotesV3WithoutFixedKey(t *testing.T) {
+	s := newTestStore(t)
+	body := `{"version":3,"notes":[{"id":"n1","content":"","title":"便签1","x":-1,"y":-1,"w":240,"h":220,"pinned":true,"slot":1,"created_at":1,"updated_at":1,"style":null}]}`
+	if err := os.WriteFile(s.NotesPath(), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := s.LoadNotes()
+	if len(got) != 1 || got[0].Fixed {
+		t.Fatalf("缺 fixed 键应读为 false: %+v", got)
+	}
+}

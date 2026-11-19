@@ -50,6 +50,7 @@ body {
 }
 
 .note-actions {
+  position: relative; /* 更多菜单的定位锚点 */
   display: flex;
   gap: 6px;
   /* 按钮不参与拖动，否则点击被拖动区吞掉 */
@@ -115,6 +116,44 @@ body {
 .note-btn.destroy:hover {
   background: rgba(0, 0, 0, 0.4);
   border-color: rgba(255, 255, 255, 0.55);
+}
+
+/* 更多菜单：置顶/设置/销毁收纳（v3.3.0）。面板底色与便签背景同源（--note-bg），
+   禁高饱和撞色；菜单浮在便签内容之上，不参与窗口拖动。
+   [hidden] 规则必须显式写：本面板 display:flex 会压过 UA 的 hidden 样式 */
+.note-moremenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+  padding: 6px;
+  background: var(--note-bg, rgba(201, 88, 119, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  z-index: 30;
+  --wails-draggable: no-drag;
+}
+
+.note-moremenu[hidden] {
+  display: none;
+}
+
+.note-moremenu .note-btn {
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+}
+
+.note-moremenu .note-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.note-moremenu .note-btn.destroy:hover {
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .note-body {

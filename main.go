@@ -333,6 +333,11 @@ func wireNoteEvents(app *application.App, ctl *wm.Controller) {
 			ctl.TogglePinned(id)
 		}
 	})
+	on("note:fixedtoggle", func(m map[string]any) {
+		if id := evStr(m, "id"); id != "" {
+			ctl.ToggleFixed(id)
+		}
+	})
 	on("note:destroyed", func(m map[string]any) {
 		if id := evStr(m, "id"); id != "" {
 			ctl.ConfirmDestroy(id)
@@ -561,6 +566,7 @@ func (o *wailsOps) Hydrate(id string, rec model.NoteRecord, style model.NoteStyl
 		"id":      id,
 		"content": rec.Content,
 		"pinned":  rec.Pinned,
+		"fixed":   rec.Fixed,
 		"slot":    rec.Slot,
 		"title":   rec.Title,
 		"style":   style,
@@ -582,6 +588,12 @@ func (o *wailsOps) SetPinned(id string, pinned bool) {
 	o.applyLayer(id, pinned)
 	if win := o.lookup(id); win != nil {
 		win.EmitEvent("note:pinned-sync", map[string]any{"id": id, "pinned": pinned})
+	}
+}
+
+func (o *wailsOps) SetFixed(id string, fixed bool) {
+	if win := o.lookup(id); win != nil {
+		win.EmitEvent("note:fixed-sync", map[string]any{"id": id, "fixed": fixed})
 	}
 }
 
