@@ -1387,3 +1387,106 @@ func TestDragLiveTickPushesPinnedToo(t *testing.T) {
 		t.Fatalf("钉住的也应被挤开: %+v", ops.glides)
 	}
 }
+
+// 满屏熔断：首轮 A 压 B（弹开成功）+ 巨型 C 接受重叠（塞不下见证）→ 熔断；
+// A 追压 B → 冻结无弹开、B 保持原位。
+func TestDragPackedModeFreezes(t *testing.T) {
+	a := model.NewRecord("", 400, 300, true)
+	a.Slot = 1
+	a.X, a.Y = 8, 8
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 250, 150
+	c := model.NewRecord("", model.MaxCoord, model.MaxCoord, true)
+	c.Slot = 3
+	c.X, c.Y = 8, 8
+	ctl, ops := newTestController(t, a, b, c)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+
+	ctl.DragLiveTick(idA, 8, 8, 400, 300)
+	// b 右弹 (416,150)（dx166 = dy166 平手偏右）；c 四向+装箱无解 → 接受重叠、熔断
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 416 || ops.glides[0].y != 150 {
+		t.Fatalf("首轮应只弹 b (416,150)，c 接受重叠: %+v", ops.glides)
+	}
+	ops.glides = nil
+	ctl.DragLiveTick(idA, 416, 150, 400, 300) // A 追压 b 新位（满屏模式应冻结）
+	if len(ops.glides) != 0 {
+		t.Fatalf("满屏熔断后不应再弹开: %+v", ops.glides)
+	}
+	if x, y := ctl.livePosForTest(idB); x != 416 || y != 150 {
+		t.Fatalf("B 应保持原位: %d,%d", x, y)
+	}
+}
+
+// 满屏标记新手势重置：熔断后 BeginDragSession，A 再压 B → B 重新弹开（左弹 dx248）。
+func TestDragPackedModeResetsOnNewSession(t *testing.T) {
+	a := model.NewRecord("", 400, 300, true)
+	a.Slot = 1
+	a.X, a.Y = 8, 8
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 250, 150
+	c := model.NewRecord("", model.MaxCoord, model.MaxCoord, true)
+	c.Slot = 3
+	c.X, c.Y = 8, 8
+	ctl, ops := newTestController(t, a, b, c)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+
+	ctl.DragLiveTick(idA, 8, 8, 400, 300) // 熔断（c 见证）
+	ops.glides = nil
+	ctl.BeginDragSession()                    // 新手势重置
+	ctl.DragLiveTick(idA, 416, 150, 400, 300) // A 压 b 新位
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 168 || ops.glides[0].y != 150 {
+		t.Fatalf("新手势应恢复解析，b 左弹 (168,150): %+v", ops.glides)
+	}
+}
+
+// 空闲桌面无限追压追弹（v3.1.0 手感回归）：无满屏见证时连续挤开。
+func TestDragUnlimitedChaseWhenRoomy(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 500, 500
+	ctl, ops := newTestController(t, a, b)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+
+	ctl.DragLiveTick(idA, 450, 450, 240, 220) // b 下弹 (500,678)
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].y != 678 {
+		t.Fatalf("首压应弹开 b: %+v", ops.glides)
+	}
+	ops.glides = nil
+	ctl.DragLiveTick(idA, 500, 500, 240, 220) // 追压 → b 再弹 (500,728)（dy50 < dx248）
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 500 || ops.glides[0].y != 728 {
+		t.Fatalf("空闲桌面应无限追压追弹: %+v", ops.glides)
+	}
+}
+
+// 召唤不受满屏标记影响：拖拽已熔断（dragPacked=true），召唤仍照常弹开。
+func TestSummonIgnoresPackedFlag(t *testing.T) {
+	a := model.NewRecord("", model.MaxCoord, model.MaxCoord, true)
+	a.Slot = 1
+	a.X, a.Y = 8, 8
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 100, 100
+	d := model.NewRecord("", 240, 220, true)
+	d.Slot = 3
+	d.X, d.Y = 100, 100
+	ctl, ops := newTestController(t, a, b, d)
+	idB := ctl.noteIDs()[1]
+
+	ctl.DragLiveTick(ctl.noteIDs()[0], 8, 8, model.MaxCoord, model.MaxCoord) // b/d 全无解 → 熔断
+	ops.glides = nil
+	ctl.DragLiveTick(ctl.noteIDs()[0], 8, 8, 240, 220) // a 缩小压 b——冻结中，不应弹开
+	if len(ops.glides) != 0 {
+		t.Fatalf("满屏熔断应冻结: %+v", ops.glides)
+	}
+	ctl.ToggleSlot(1) // 隐藏 a
+	ctl.ToggleSlot(3) // 隐藏 d
+	ctl.ToggleSlot(3) // 召唤 d(100,100) 压 b(100,100)——nil 路径不受 dragPacked 影响
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 100 || ops.glides[0].y != 328 {
+		t.Fatalf("召唤应照常弹开 b (100,328)（下 dy228 < 右 dx248）: %+v", ops.glides)
+	}
+}

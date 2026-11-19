@@ -31,7 +31,7 @@ type Push struct {
 	Mode PushMode
 }
 
-// ResolveOverlaps 召唤弹开核心（纯函数）。self 为已落地召唤便签矩形；notes 为
+// ResolveOverlaps 召唤/拖拽弹开核心（纯函数）。self 为已落地便签矩形；notes 为
 // 其余全部可见便签（实时几何，皆可推）。与「已落地矩形集」相交的便签被弹开：
 // 右/下/左/上迭代越过已落地遮挡者（迭代有界），取可行者中位移最小者（平手偏向
 // 右/下——候选按此顺序生成、严格小于才替换），落点留 pushGap 间隙且完整在屏内
@@ -39,7 +39,9 @@ type Push struct {
 // 接受重叠（原地不动、不出现在结果）。被弹者落点撞上未处理便签时，该便签在其
 // 后的扫描轮被弹开（级联）；每张至多解析一次，循环有界。已落地矩形两两无交
 //（归纳：每次落点都对当时全部已落地者复核），推进迭代必然终止。
-func ResolveOverlaps(self Rect, notes []PushNote, screenW, screenH float32) []Push {
+// packed 返回本趟是否存在「接受重叠」（四向+装箱全部无解）——桌面塞不下的
+// 结构性见证，拖拽手势据此触发满屏熔断（v3.2.0）。
+func ResolveOverlaps(self Rect, notes []PushNote, screenW, screenH float32) (pushes []Push, packed bool) {
 	landed := []Rect{self}
 	byID := make(map[string]Rect, len(notes))
 	for _, n := range notes {
@@ -92,13 +94,14 @@ func ResolveOverlaps(self Rect, notes []PushNote, screenW, screenH float32) []Pu
 				out = append(out, Push{ID: n.ID, X: int(pnx), Y: int(pny), Mode: PushPack})
 				progressed = true
 			}
-			// 否则接受重叠：原地不动
+			// 否则接受重叠：原地不动（桌面塞不下的见证）
+			packed = true
 		}
 		if !progressed {
 			break
 		}
 	}
-	return out
+	return out, packed
 }
 
 type disp struct{ dx, dy float32 }

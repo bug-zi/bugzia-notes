@@ -680,6 +680,7 @@ func (o *wailsOps) finishGlide(id string, done chan struct{}) {
 // Frameless 手势的 Start 恒为 WindowStartMove（缩放也走它）、End 恒为
 // WindowEndResize（wails 以左键状态启发式判定），故四事件全订阅、任一生效。
 func (o *wailsOps) startDragSession(id string) {
+	o.ctl.BeginDragSession() // v3.2.0：新手势重置让位预算
 	o.animMu.Lock()
 	if done, ok := o.dragSessions[id]; ok {
 		close(done)

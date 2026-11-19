@@ -66,6 +66,11 @@ type Controller struct {
 	// 去重避免确认浮层被反复拉起导致「点 N 无效」的观感）
 	confirming map[string]bool
 
+	// dragPacked 当前拖动/缩放手势的满屏熔断标记（v3.2.0）：手势内首次出现
+	// 「四向弹开+装箱兜底全部无解」（桌面塞不下的见证）后，本手势不再弹开
+	// 任何便签——接受重叠、立即静止。BeginDragSession 在手势开始时重置。
+	dragPacked bool
+
 	// needsFocus 新建便签待聚焦（等窗口 ready 注水后再聚焦）
 	needsFocus map[string]bool
 }
@@ -423,7 +428,7 @@ func (c *Controller) summonNote(id string, focus bool) {
 		c.activeID = id // 召唤显示即成为当前便签
 		c.mu.Unlock()
 	}
-	if pushed := c.pushPass(n); pushed > 0 {
+	if pushed := c.pushPass(n, false); pushed > 0 {
 		log.Printf("[summon] %s 落地原位，弹开 %d 张", n.rec.ID, pushed)
 	}
 }
@@ -432,7 +437,18 @@ func (c *Controller) summonNote(id string, focus bool) {
 //（级联/兜底）→ 状态先写（px/py；placed 同步 rec.X/Y、哨兵不动、不刷 UpdatedAt）
 // → GlideNote 动画视觉追赶（瀑布错峰）。整趟一次防抖落盘。返回实际弹开张数
 //（召唤路径用于记日志；拖拽/记账兜底路径不打日志，20Hz 采样会刷屏）。
-func (c *Controller) pushPass(self *NoteLive) int {
+// trackPacked=true 时受满屏熔断约束（v3.2.0）：dragPacked 已置位则直接返回 0；
+// 本趟出现「接受重叠」（桌面塞不下的见证）则置位 dragPacked，此后本手势静止。
+// false = 无熔断语义（召唤路径，不读不写标记）。
+func (c *Controller) pushPass(self *NoteLive, trackPacked bool) int {
+	if trackPacked {
+		c.mu.Lock()
+		packed := c.dragPacked
+		c.mu.Unlock()
+		if packed {
+			return 0 // 满屏模式：本手势不再弹开任何便签，接受一切重叠
+		}
+	}
 	c.mu.Lock()
 	lw, lh := liveSizeLocked(self)
 	selfRect := Rect{
@@ -464,7 +480,12 @@ func (c *Controller) pushPass(self *NoteLive) int {
 		return 0
 	}
 	sw, sh := c.ops.PrimaryScreen()
-	pushes := ResolveOverlaps(selfRect, notes, sw, sh)
+	pushes, packed := ResolveOverlaps(selfRect, notes, sw, sh)
+	if trackPacked && packed {
+		c.mu.Lock()
+		c.dragPacked = true // 桌面塞不下的见证：本趟起冻结（0 弹开也要置位）
+		c.mu.Unlock()
+	}
 	if len(pushes) == 0 {
 		return 0
 	}
@@ -498,7 +519,15 @@ func (c *Controller) DragLiveTick(id string, x, y, w, h int) {
 		n.rw, n.rh = model.ClampW(w), model.ClampH(h)
 	}
 	c.mu.Unlock()
-	c.pushPass(n)
+	c.pushPass(n, true)
+}
+
+// BeginDragSession 拖动/缩放手势开始（v3.2.0）：重置满屏熔断标记——新手势
+// 重新评估桌面容量；空闲则恢复实时挤开，塞满则再次熔断。
+func (c *Controller) BeginDragSession() {
+	c.mu.Lock()
+	c.dragPacked = false
+	c.mu.Unlock()
 }
 
 // ── 注水与前端事件入口 ──────────────────────────────────────────────────
@@ -591,7 +620,7 @@ func (c *Controller) NoteMoved(id string, x, y int) {
 	n.px, n.py = x, y
 	n.rec.UpdatedAt = time.Now().UnixMilli()
 	c.mu.Unlock()
-	c.pushPass(n) // 兜底弹开：松手残留重叠 / 拖动中停顿记账 / 键盘移动（无会话事件）
+	c.pushPass(n, true) // 兜底弹开：松手残留重叠 / 拖动中停顿记账 / 键盘移动（无会话事件）
 	c.scheduleSave()
 }
 
@@ -607,7 +636,7 @@ func (c *Controller) NoteResized(id string, w, h int) {
 	n.rw, n.rh = 0, 0 // 会话实时尺寸清零，后续几何计算回退 rec 值
 	n.rec.UpdatedAt = time.Now().UnixMilli()
 	c.mu.Unlock()
-	c.pushPass(n) // 兜底弹开：缩放变大压到兄弟
+	c.pushPass(n, true) // 兜底弹开：缩放变大压到兄弟
 	c.scheduleSave()
 }
 
