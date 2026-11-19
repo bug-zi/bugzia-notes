@@ -126,7 +126,7 @@ func defaultTitles(notes []model.NoteRecord) []model.NoteRecord {
 
 // migrateNotesToV3 v1 → v3 升级：最新更新的自由便签升级为主便签（Slot=0，
 // 字段全保留），其余不加载；原文件改名备份留存后立即以 v3 落盘
-// （v1→v2 原迁移逻辑 + v3 标题，见 2026-11-18-v2.1.0-free-notes-title-design.md §5.1）。
+// （v1→v2 原迁移逻辑 + v3 标题，见 docs/project/便签/archive/2026-11-18-v2.1.0-free-notes-title-design.md §5.1）。
 // 改名失败：原文件不动、按空表启动（防半迁移态，下次启动重试）；
 // v3 重写失败仅记日志（内存已是 v3 语义，后续防抖保存补写）。
 func (s *Store) migrateNotesToV3(notes []model.NoteRecord) []model.NoteRecord {

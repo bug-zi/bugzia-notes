@@ -4,11 +4,13 @@
 
 **Goal:** 把自由便签列表重构为 6 个固定槽位（1 主 + 5 辅），六键统一切换式（建/显/隐），辅助便签各一色（槽位色可改），`alt+n`/`alt+z` 保留，老数据平滑升级。
 
+- 已归档：261118 随 v2.1.0 发布清点归档（功能已随 v2.0.0 落地）
+
 **Architecture:** 槽位作为便签属性（`NoteRecord.Slot`），复用现有窗口/事件/装箱/防抖/回收站机制。notes.json 与 settings.json 各做 v1→v2 版本化升级；快捷键 id 表 3→8；`EffectiveStyle` 三级优先（锁 > 槽位色 > 全局）。
 
 **Tech Stack:** Go 1.x + Wails v3（Windows），前端原生 HTML/CSS/JS（无构建链，`Call.ByName` 直调服务）。
 
-**设计文档:** `docs/project/便签/2026-11-18-slot-model-design.md`（已批准，本计划的任务均以其为准）
+**设计文档:** `docs/project/便签/archive/2026-11-18-slot-model-design.md`（已批准，本计划的任务均以其为准）
 
 **工程纪律（本项目特殊约定，覆盖通用流程）:**
 

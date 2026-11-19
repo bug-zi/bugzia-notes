@@ -120,8 +120,8 @@ func (c *Controller) startRestore(hidden bool) {
 
 // ── 创建（槽位模型）────────────────────────────────────────────────────
 
-// ToggleSlot 槽位便签三态切换（六键统一入口，docs/project/便签/2026-11-18-
-// slot-model-design.md §7.1）：槽位无便签→创建并显示聚焦成为当前便签；
+// ToggleSlot 槽位便签三态切换（六键统一入口，docs/project/便签/archive/
+// 2026-11-18-slot-model-design.md §7.1）：槽位无便签→创建并显示聚焦成为当前便签；
 // 隐藏→显示聚焦；已显示→隐藏。slot 越界忽略。
 func (c *Controller) ToggleSlot(slot int) {
 	if slot < 0 || slot >= model.SlotCount {
@@ -223,6 +223,87 @@ func (c *Controller) createFreeNote() {
 	c.activeID = live.rec.ID
 	c.needsFocus[live.rec.ID] = true
 	c.mu.Unlock()
+}
+
+// ToggleMainSet 「便签集合切换」键（toggle）入口（v2.2.0）：集合 = 主便签 +
+// 全部自由便签，辅助便签不参与。展开 = 集合内每张钉住且可见（主便签缺失即
+// 未展开）；未展开 → 补建缺失的主便签、召唤全部隐藏成员、未钉成员升钉保证
+// 可见（防空转，升钉不刷 UpdatedAt）、聚焦集合内最近活跃一张；已展开 →
+// 集合全部收起。
+func (c *Controller) ToggleMainSet() {
+	c.mu.Lock()
+	var main *NoteLive
+	set := make([]*NoteLive, 0, len(c.notes))
+	for _, n := range c.notes {
+		switch n.rec.Slot {
+		case model.SlotMain:
+			main = n
+			set = append(set, n)
+		case model.SlotFree:
+			set = append(set, n)
+		}
+	}
+	expanded := main != nil
+	for _, n := range set {
+		if !n.rec.Pinned || !c.visible[n.rec.ID] {
+			expanded = false
+			break
+		}
+	}
+	if expanded {
+		ids := make([]string, 0, len(set))
+		for _, n := range set {
+			ids = append(ids, n.rec.ID)
+		}
+		c.mu.Unlock()
+		for _, id := range ids {
+			c.hideNote(id)
+		}
+		return
+	}
+
+	// 召唤分支：聚焦目标先定（UpdatedAt 最大；补建场景聚焦交给新主便签的
+	// needsFocus 机制，不在此处）
+	focusID := ""
+	var focusAt int64
+	if main != nil {
+		for _, n := range set {
+			if focusID == "" || n.rec.UpdatedAt > focusAt {
+				focusID, focusAt = n.rec.ID, n.rec.UpdatedAt
+			}
+		}
+	}
+	promoted := make([]string, 0)
+	summoned := make([]string, 0)
+	for _, n := range set {
+		if !n.rec.Pinned {
+			n.rec.Pinned = true // 仅改层级，不刷 UpdatedAt
+			promoted = append(promoted, n.rec.ID)
+		}
+		if !c.visible[n.rec.ID] {
+			summoned = append(summoned, n.rec.ID)
+		}
+	}
+	c.mu.Unlock()
+
+	if main == nil {
+		c.createSlotNote(model.SlotMain, false) // 补建：即钉住、装箱、needsFocus
+	}
+	for _, id := range summoned {
+		c.showNote(id)
+	}
+	for _, id := range promoted {
+		c.ops.SetPinned(id, true)
+	}
+	if len(promoted) > 0 || main == nil {
+		c.scheduleSave() // 升钉 / 补建一并固化（防抖，非同步写盘）
+	}
+	if focusID != "" {
+		c.ops.FocusNote(focusID)
+		c.mu.Lock()
+		c.activeID = focusID // 召唤显示即成为当前便签
+		c.mu.Unlock()
+	}
 }
 
 // nextDefaultTitle 默认标题「便签n」：n 从创建后的总数（现有数+1）起试，
@@ -405,7 +486,7 @@ func (c *Controller) NoteResized(id string, w, h int) {
 }
 
 // scheduleSave 防抖持久化（全量：所有便签落盘，pinned 只决定层级——
-// 2026-11-17 设计变更，见 docs/project/便签/2026-11-17-per-note-style-lock-design.md §5）。
+// 2026-11-17 设计变更，见 docs/project/便签/archive/2026-11-17-per-note-style-lock-design.md §5）。
 func (c *Controller) scheduleSave() {
 	c.mu.Lock()
 	all := make([]model.NoteRecord, 0, len(c.notes))

@@ -16,7 +16,7 @@ import (
 )
 
 // Version 应用版本（设置窗口展示）。
-const Version = "v2.1.0"
+const Version = "v2.2.1"
 
 // Service 暴露给前端的服务（Wails 绑定）。
 type Service struct {
@@ -25,6 +25,7 @@ type Service struct {
 	mgr   *hotkey.Manager
 	fire  func(id int) // 热键触发回调（main 注入，内含主线程调度）
 	check func(manual bool) map[string]any // 更新检查回调（main 注入，含弹框与重启流程）
+	open  func() // 打开更新日志窗口回调（main 注入，单例窗口）
 }
 
 // NewService 构建设置服务。
@@ -137,6 +138,16 @@ func (s *Service) SetAutoStart(enable bool) error {
 
 // SetUpdateCheck 注入更新检查回调（main 在 app 构建后设置；nil 时手动检查报未就绪）。
 func (s *Service) SetUpdateCheck(fn func(manual bool) map[string]any) { s.check = fn }
+
+// SetOpenChangelog 注入更新日志窗口回调（main 在 app 构建后设置；nil 时静默返回）。
+func (s *Service) SetOpenChangelog(fn func()) { s.open = fn }
+
+// OpenChangelog 打开更新日志弹窗（设置窗口按钮，前端经绑定调用；v2.2.1）。
+func (s *Service) OpenChangelog() {
+	if s.open != nil {
+		s.open()
+	}
+}
 
 // CheckUpdate 手动检查更新（设置窗口按钮）：跳过 24h 节流，每个终点都有反馈。
 func (s *Service) CheckUpdate() map[string]any {

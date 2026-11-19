@@ -1,0 +1,54 @@
+/* 更新日志窗口：深色实底、玫红点缀（与设置/回收站同源），无高饱和撞色。 */
+
+html, body {
+  margin: 0;
+  background: #1e1e24;
+  color: #e8e6ea;
+  font: 13px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+.panel { padding: 16px 18px; }
+
+h2 {
+  font-size: 14px;
+  color: #d98ba1;
+  border-bottom: 1px solid #33323a;
+  padding-bottom: 6px;
+  margin: 0 0 10px;
+}
+
+.changelog {
+  max-height: calc(100vh - 78px);
+  overflow-y: auto;
+}
+
+.changelog-ver {
+  margin: 10px 0 2px;
+  color: #d98ba1;
+  font-size: 13px;
+}
+
+.changelog-ver strong { font-weight: 600; }
+
+.changelog-date {
+  color: #8a8894;
+  font-size: 12px;
+}
+
+.changelog-cur {
+  margin-left: 8px;
+  font-size: 11px;
+  color: #7d3d51;
+  border: 1px solid #96536a;
+  border-radius: 4px;
+  padding: 0 6px;
+}
+
+.changelog ul {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+  color: #c9c7cf;
+  font-size: 12px;
+}
+
+.changelog li { margin: 1px 0; }

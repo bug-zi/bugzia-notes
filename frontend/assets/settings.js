@@ -200,6 +200,16 @@ document.getElementById("check-update").addEventListener("click", async () => {
   }
 });
 
+/* ── 更新日志（独立弹窗窗口，服务 OpenChangelog 唤起）──────────────── */
+
+document.getElementById("show-changelog").addEventListener("click", async () => {
+  try {
+    await wails.Call.ByName(NS + "OpenChangelog");
+  } catch (e) {
+    console.error("打开更新日志失败", e);
+  }
+});
+
 /* ── 初始化：读设置回填 ───────────────────────────────────────────── */
 
 async function init() {

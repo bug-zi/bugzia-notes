@@ -79,6 +79,7 @@ func main() {
 	})
 	ops.app = app
 	svc.SetUpdateCheck(func(manual bool) map[string]any { return updateFlow(upd, app, manual) })
+	svc.SetOpenChangelog(func() { openChangelog(app) })
 
 	// 首次运行（本应用尚无 settings.json）自动迁移 bugzia 配置
 	//（便签样式默认 + 便签三键；summon 属输入条不迁移）
@@ -91,7 +92,7 @@ func main() {
 		}
 	}
 
-	initTray(app, ctl)
+	initTray(app)
 	wireNoteEvents(app, ctl)
 
 	// 自启动条目自愈：exe 被挪动后把 Run 值整串重写为当前路径
@@ -146,7 +147,7 @@ func launchSilent(args []string) bool {
 func dispatchHotkey(ctl *wm.Controller, id int) {
 	switch id {
 	case hotkey.IDToggle:
-		ctl.ToggleSlot(model.SlotMain) // 主便签切换（2.0.1 语义保持）
+		ctl.ToggleMainSet() // v2.2.0：集合切换（主便签 + 自由便签），辅助键不受影响
 	case hotkey.IDMain:
 		ctl.CreateOrSummonFree() // v2.1.0：回归「新建便签」，有隐藏自由便签先召唤最近一张
 	case hotkey.IDKill:
@@ -179,7 +180,7 @@ func rebindHotkeys(mgr *hotkey.Manager, hs model.HotkeySettings, ctl *wm.Control
 	}
 }
 
-func initTray(app *application.App, ctl *wm.Controller) {
+func initTray(app *application.App) {
 	tray := app.SystemTray.New()
 	menu := application.NewMenu()
 	mk := func(label string, fn func()) *application.MenuItem {
@@ -189,7 +190,6 @@ func initTray(app *application.App, ctl *wm.Controller) {
 		})
 		return item
 	}
-	_ = mk("召唤主便签", func() { ctl.ToggleSlot(model.SlotMain) })
 	_ = mk("回收站", func() { openTrash(app) })
 	_ = mk("设置", func() { openSettings(app) })
 	menu.AddSeparator()
@@ -228,6 +228,23 @@ func openTrash(app *application.App) {
 		URL:             "/trash.html",
 		Width:           420,
 		Height:          520,
+		DevToolsEnabled: true,
+	})
+}
+
+// openChangelog 打开更新日志窗口（单例，窗体参数对齐回收站窗口）。
+func openChangelog(app *application.App) {
+	if win := lookupWindow(app, "changelog"); win != nil {
+		win.Show()
+		win.Focus()
+		return
+	}
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:            "changelog",
+		Title:           "bugzia-notes 更新日志",
+		URL:             "/changelog.html",
+		Width:           460,
+		Height:          600,
 		DevToolsEnabled: true,
 	})
 }

@@ -26,7 +26,7 @@
 
   <h2>全局快捷键（留空 = 禁用）</h2>
   <div class="row">
-    <label>主便签切换 <input id="hk-toggle" placeholder="alt+n"></label>
+    <label>便签集合切换 <input id="hk-toggle" placeholder="alt+n"></label>
     <label>新建便签 <input id="hk-main" placeholder="alt+c"></label>
     <label>销毁当前 <input id="hk-destroy" placeholder="alt+z"></label>
   </div>
@@ -44,7 +44,9 @@
     <span id="hk-msg" class="msg"></span>
   </div>
   <p class="hint">
-    主便签切换：只切换主便签的显示/隐藏（首次按下自动创建），不干涉其他便签。
+    便签集合切换：统一管理主便签与自由便签（新建便签创建的那些）的召唤与收起——
+    未全部显示时召唤全部隐藏的（主便签缺失自动补建、未钉住的自动钉住保证可见），
+    全部显示时一次收起；不干涉辅助便签。
     新建便签：新建一张自由便签（默认样式，可在便签上锁定独立样式）；
     若有隐藏的自由便签则先召唤最近一张。
     辅助便签 1~5：固定五槽位逐个召唤，未锁定时底色为槽位色，锁定后独立。
@@ -78,6 +80,9 @@
   <p class="update-row">
     <button id="check-update">检查更新</button>
     <span id="update-status" class="update-status"></span>
+  </p>
+  <p class="update-row">
+    <button id="show-changelog">查看更新日志</button>
   </p>
 </div>
 <script type="module" src="/assets/settings.js"></script>

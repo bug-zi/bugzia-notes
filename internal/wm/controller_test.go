@@ -812,3 +812,119 @@ func TestSetTitleTrimsClampsAndGuards(t *testing.T) {
 		t.Fatalf("标题应随记录落盘: %+v", saved)
 	}
 }
+
+func TestToggleMainSetSummonsAndPromotes(t *testing.T) {
+	ctl, ops := newTestController(t)
+	ctl.ToggleSlot(model.SlotMain) // 主便签（创建即钉住显示）
+	ctl.CreateOrSummonFree()       // 自由 A
+	ctl.CreateOrSummonFree()       // 自由 B
+	ids := ctl.noteIDs()
+	main, a, b := ids[0], ids[1], ids[2]
+	ctl.hideNote(a)                // A 隐藏 → 集合未展开
+	ctl.setPinnedForTest(b, false) // B 未钉（仍显示、沉底）
+	// A 定为集合内最近活跃（固定值，不受时钟精度影响；写法同 TestCreateOrSummonFreeSummonsHiddenMostRecent）
+	ctl.mu.Lock()
+	ctl.findLocked(a).rec.UpdatedAt = 9_000_000_000_000
+	ctl.mu.Unlock()
+
+	ctl.ToggleMainSet()
+
+	if !ctl.visible[a] {
+		t.Fatal("隐藏的自由便签应被召唤")
+	}
+	if !ctl.visible[main] || !ctl.visible[b] {
+		t.Fatal("集合内已有可见成员应保持显示")
+	}
+	if ops.pins[b] != true {
+		t.Fatal("未钉成员应被升钉（SetPinned）")
+	}
+	for _, r := range ctl.AllRecords() {
+		if r.ID == b && !r.Pinned {
+			t.Fatal("未钉成员记录应已升钉")
+		}
+		if r.ID == a && r.UpdatedAt != 9_000_000_000_000 {
+			t.Fatal("升钉不得刷新 UpdatedAt")
+		}
+	}
+	if n := len(ops.focused); n != 1 || ops.focused[0] != a {
+		t.Fatalf("应聚焦集合内最近活跃一张: %v", ops.focused)
+	}
+	if ctl.activeIDForTest() != a {
+		t.Fatalf("当前便签应为聚焦便签: %q", ctl.activeIDForTest())
+	}
+}
+
+func TestToggleMainSetHidesAllLeavesAux(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(model.SlotMain) // 主
+	ctl.CreateOrSummonFree()       // 自由
+	ctl.ToggleSlot(1)              // 辅助 1（集合外）
+	ids := ctl.noteIDs()
+	main, free, aux := ids[0], ids[1], ids[2]
+
+	ctl.ToggleMainSet() // 集合全钉住且可见 → 收起
+	if ctl.visible[main] || ctl.visible[free] {
+		t.Fatal("集合应全部收起")
+	}
+	if !ctl.visible[aux] {
+		t.Fatal("辅助便签不得被干涉（应保持显示）")
+	}
+
+	ctl.ToggleMainSet() // 未展开 → 召回
+	if !ctl.visible[main] || !ctl.visible[free] {
+		t.Fatal("再按应召唤集合")
+	}
+	if !ctl.visible[aux] {
+		t.Fatal("辅助便签仍应保持显示")
+	}
+}
+
+func TestToggleMainSetCreatesMainWhenMissing(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.CreateOrSummonFree() // 自由 A（显示）
+	ctl.CreateOrSummonFree() // 自由 B（显示）
+	ids := ctl.noteIDs()
+	ctl.hideNote(ids[1]) // B 隐藏 → 未展开（且无主便签）
+
+	ctl.ToggleMainSet()
+
+	main := ""
+	for _, r := range ctl.AllRecords() {
+		if r.Slot == model.SlotMain {
+			main = r.ID
+		}
+	}
+	if main == "" {
+		t.Fatal("主便签缺失应被补建")
+	}
+	if !ctl.visible[main] {
+		t.Fatal("补建的主便签应显示")
+	}
+	for _, r := range ctl.AllRecords() {
+		if r.ID == main && !r.Pinned {
+			t.Fatal("补建的主便签应钉住")
+		}
+	}
+	if !ctl.visible[ids[0]] || !ctl.visible[ids[1]] {
+		t.Fatal("自由便签应全部召唤显示")
+	}
+	ctl.mu.Lock()
+	_, pendingFocus := ctl.needsFocus[main]
+	ctl.mu.Unlock()
+	if !pendingFocus {
+		t.Fatal("补建聚焦应挂起（窗口 ready 后聚焦）")
+	}
+}
+
+func TestToggleMainSetEmptyCollectionCreatesMain(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleMainSet() // 无任何便签 → 仅补建主便签
+	ids := ctl.noteIDs()
+	if len(ids) != 1 {
+		t.Fatalf("应仅补建主便签: %v", ids)
+	}
+	rec := ctl.AllRecords()[0]
+	if rec.Slot != model.SlotMain || !rec.Pinned {
+		t.Fatal("补建记录应为钉住的主便签")
+	}
+}

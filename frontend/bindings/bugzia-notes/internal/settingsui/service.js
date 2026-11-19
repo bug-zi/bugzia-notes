@@ -109,6 +109,14 @@ export function MigrateBugziaConfig() {
 }
 
 /**
+ * OpenChangelog 打开更新日志弹窗（设置窗口按钮，前端经绑定调用；v2.2.1）。
+ * @returns {$CancellablePromise<void>}
+ */
+export function OpenChangelog() {
+    return $Call.ByID(379572880);
+}
+
+/**
  * SetAutoStart 开关开机自启动：开启以当前 exe 路径写入 Run 值，
  * 关闭删除 Run 值。失败原样返回错误（前端行内报错 + 开关回弹）。
  * @param {boolean} enable
@@ -126,6 +134,15 @@ export function SetAutoStart(enable) {
  */
 export function SetNoteStyleLock(id, locked) {
     return $Call.ByID(3347553824, id, locked);
+}
+
+/**
+ * SetOpenChangelog 注入更新日志窗口回调（main 在 app 构建后设置；nil 时静默返回）。
+ * @param {any} fn
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetOpenChangelog(fn) {
+    return $Call.ByID(2744348744, fn);
 }
 
 /**
