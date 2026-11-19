@@ -42,3 +42,8 @@ func PackTopLeft(rects []Rect, w, h, screenW, screenH float32) (float32, float32
 	}
 	return left, top
 }
+
+// rectsIntersect 两矩形是否有任意像素相交（仅贴边相接不算）。
+func rectsIntersect(a, b Rect) bool {
+	return a.X < b.X+b.W && a.X+a.W > b.X && a.Y < b.Y+b.H && a.Y+a.H > b.Y
+}

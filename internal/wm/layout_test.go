@@ -56,3 +56,22 @@ func TestPackTopLeftClampsWhenFull(t *testing.T) {
 		t.Fatalf("全满应夹回锚点而不是漂出屏幕: (%v,%v)", x, y)
 	}
 }
+
+func TestRectsIntersect(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b Rect
+		want bool
+	}{
+		{"中心相交", Rect{X: 0, Y: 0, W: 10, H: 10}, Rect{X: 5, Y: 5, W: 10, H: 10}, true},
+		{"贴边不交", Rect{X: 0, Y: 0, W: 10, H: 10}, Rect{X: 10, Y: 0, W: 10, H: 10}, false},
+		{"包含", Rect{X: 0, Y: 0, W: 10, H: 10}, Rect{X: 2, Y: 2, W: 3, H: 3}, true},
+		{"完全分离", Rect{X: 0, Y: 0, W: 10, H: 10}, Rect{X: 100, Y: 100, W: 5, H: 5}, false},
+		{"负坐标相交", Rect{X: -10, Y: -10, W: 15, H: 15}, Rect{X: 0, Y: 0, W: 10, H: 10}, true},
+	}
+	for _, c := range cases {
+		if got := rectsIntersect(c.a, c.b); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+}

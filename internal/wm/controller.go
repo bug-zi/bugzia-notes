@@ -31,6 +31,9 @@ type WindowOps interface {
 	HideNote(id string)
 	CloseNote(id string)
 	FocusNote(id string)
+	// MoveNote 程序性位移召唤便签窗口（v2.3.0 避重叠摆放）；实现必须防止
+	// 该移动触发 WindowDidMove 被记为用户拖动（写 rec.X/Y + 刷 UpdatedAt）。
+	MoveNote(id string, x, y int)
 	Notify(title, body string)
 	// PrimaryScreen 主屏逻辑尺寸（装箱用）。
 	PrimaryScreen() (w, h float32)
@@ -142,11 +145,7 @@ func (c *Controller) ToggleSlot(slot int) {
 	case id == "":
 		c.createSlotNote(slot, false)
 	case !visible:
-		c.showNote(id)
-		c.ops.FocusNote(id)
-		c.mu.Lock()
-		c.activeID = id // 召唤显示即成为当前便签
-		c.mu.Unlock()
+		c.summonNote(id, true)
 	default:
 		c.hideNote(id)
 	}
@@ -200,11 +199,7 @@ func (c *Controller) CreateOrSummonFree() {
 		c.createFreeNote()
 		return
 	}
-	c.showNote(id)
-	c.ops.FocusNote(id)
-	c.mu.Lock()
-	c.activeID = id // 召唤显示即成为当前便签
-	c.mu.Unlock()
+	c.summonNote(id, true)
 }
 
 // createFreeNote 新建自由便签：未锁定时跟随全局默认样式（独立样式设置的
@@ -290,7 +285,7 @@ func (c *Controller) ToggleMainSet() {
 		c.createSlotNote(model.SlotMain, false) // 补建：即钉住、装箱、needsFocus
 	}
 	for _, id := range summoned {
-		c.showNote(id)
+		c.summonNote(id, false)
 	}
 	for _, id := range promoted {
 		c.ops.SetPinned(id, true)
@@ -376,6 +371,106 @@ func (c *Controller) packPos(self *NoteLive, w, h float32) (int, int) {
 	sw, sh := c.ops.PrimaryScreen()
 	px, py := PackTopLeft(rects, w, h, sw, sh)
 	return int(math.Round(float64(px))), int(math.Round(float64(py)))
+}
+
+// ── 召唤（v2.3.0 智能避重叠）────────────────────────────────────────────
+
+// originLocked 召唤/避让用便签当前位置：实时 px/py 优先，未摆放回退记录值
+//（与 packPos 同规则，负坐标合法）；两者皆哨兵 = 无从判定返回 false。须持锁。
+func originLocked(n *NoteLive) (int, int, bool) {
+	if n.px != model.SentinelCoord {
+		return n.px, n.py, true
+	}
+	if n.rec.X != model.SentinelCoord && n.rec.Y != model.SentinelCoord {
+		return n.rec.X, n.rec.Y, true
+	}
+	return 0, 0, false
+}
+
+// obstacleRectsLocked 当前全部可见便签的矩形（排除 excludeID；位置规则同
+// originLocked，哨兵记录不参与）。隐藏便签不占桌面，不算障碍。须持锁。
+func (c *Controller) obstacleRectsLocked(excludeID string) []Rect {
+	rects := make([]Rect, 0, len(c.notes))
+	for _, n := range c.notes {
+		if n.rec.ID == excludeID || !c.visible[n.rec.ID] {
+			continue
+		}
+		sx, sy, ok := originLocked(n)
+		if !ok {
+			continue
+		}
+		rects = append(rects, Rect{
+			X: float32(sx), Y: float32(sy),
+			W: float32(model.ClampW(n.rec.W)), H: float32(model.ClampH(n.rec.H)),
+		})
+	}
+	return rects
+}
+
+// summonNote 召唤隐藏便签（三入口共用）：原位无重叠 → 原位；被占 → 装箱找
+// 空位（落点复核不重叠，复核兼识别屏幕满——PackTopLeft 无空位时回退左上锚点
+// 可能重叠）；屏幕满 → 原位叠放（置顶由钉住 TOPMOST + Focus 保证）。位移是
+// 程序性摆放：只更新实时 px/py，不写 rec.X/Y（哨兵语义不变，下次召唤重新
+// 判定）。focus=true 时聚焦并记为当前便签。
+func (c *Controller) summonNote(id string, focus bool) {
+	c.mu.Lock()
+	n := c.findLocked(id)
+	if n == nil || c.visible[id] {
+		c.mu.Unlock()
+		return
+	}
+	w := float32(model.ClampW(n.rec.W))
+	h := float32(model.ClampH(n.rec.H))
+	ox, oy, hasOrigin := originLocked(n)
+	rects := c.obstacleRectsLocked(n.rec.ID)
+	c.mu.Unlock()
+
+	moved := false
+	tx, ty := ox, oy
+	if hasOrigin {
+		x, y := ox, oy
+		self := Rect{X: float32(ox), Y: float32(oy), W: w, H: h}
+		overlapped := false
+		for _, r := range rects {
+			if rectsIntersect(self, r) {
+				overlapped = true
+				break
+			}
+		}
+		if overlapped {
+			sw, sh := c.ops.PrimaryScreen()
+			nx, ny := PackTopLeft(rects, w, h, sw, sh)
+			cand := Rect{X: nx, Y: ny, W: w, H: h}
+			clear := true
+			for _, r := range rects {
+				if rectsIntersect(cand, r) {
+					clear = false // 情况 3：屏幕满，装箱回退点也重叠
+					break
+				}
+			}
+			if clear {
+				x, y = int(math.Round(float64(nx))), int(math.Round(float64(ny)))
+			}
+		}
+		if x != ox || y != oy {
+			moved, tx, ty = true, x, y
+			c.mu.Lock()
+			n.px, n.py = x, y
+			c.mu.Unlock()
+			c.ops.MoveNote(id, x, y)
+		}
+	}
+	log.Printf("[summon] %s moved=%v target=(%d,%d) 障碍=%d", id, moved, tx, ty, len(rects))
+	c.ops.ShowNote(id)
+	c.mu.Lock()
+	c.visible[id] = true
+	c.mu.Unlock()
+	if focus {
+		c.ops.FocusNote(id)
+		c.mu.Lock()
+		c.activeID = id // 召唤显示即成为当前便签
+		c.mu.Unlock()
+	}
 }
 
 // ── 注水与前端事件入口 ──────────────────────────────────────────────────

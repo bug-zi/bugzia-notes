@@ -12,6 +12,12 @@ import (
 	"bugzia-notes/internal/store"
 )
 
+// moveCall 记录一次程序性位移（召唤避重叠测试用）。
+type moveCall struct {
+	id   string
+	x, y int
+}
+
 // fakeOps WindowOps 内存替身（headless 测试）。
 type fakeOps struct {
 	created        []string
@@ -23,6 +29,7 @@ type fakeOps struct {
 	hydratedStyles []model.NoteStyle
 	pins           map[string]bool
 	confirms       []string
+	moves          []moveCall
 }
 
 func newFakeOps() *fakeOps {
@@ -54,6 +61,10 @@ func (f *fakeOps) HideNote(id string) { f.hidden[id] = true }
 func (f *fakeOps) CloseNote(id string) { f.closed[id] = true }
 
 func (f *fakeOps) FocusNote(id string) { f.focused = append(f.focused, id) }
+
+func (f *fakeOps) MoveNote(id string, x, y int) {
+	f.moves = append(f.moves, moveCall{id: id, x: x, y: y})
+}
 
 func (f *fakeOps) Notify(title, body string) { f.notify = append(f.notify, body) }
 
@@ -96,6 +107,35 @@ func (c *Controller) setPinnedForTest(id string, p bool) {
 		n.rec.Pinned = p
 	}
 	c.mu.Unlock()
+}
+
+func (c *Controller) livePosForTest(id string) (int, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := c.findLocked(id); n != nil {
+		return n.px, n.py
+	}
+	return 0, 0
+}
+
+func recByID(t *testing.T, c *Controller, id string) model.NoteRecord {
+	t.Helper()
+	for _, r := range c.AllRecords() {
+		if r.ID == id {
+			return r
+		}
+	}
+	t.Fatalf("便签不存在: %s", id)
+	return model.NoteRecord{}
+}
+
+func updatedAtForTest(c *Controller, id string) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := c.findLocked(id); n != nil {
+		return n.rec.UpdatedAt
+	}
+	return 0
 }
 
 func TestDestroyCurrentFallsBackToActiveThenLast(t *testing.T) {
@@ -926,5 +966,162 @@ func TestToggleMainSetEmptyCollectionCreatesMain(t *testing.T) {
 	rec := ctl.AllRecords()[0]
 	if rec.Slot != model.SlotMain || !rec.Pinned {
 		t.Fatal("补建记录应为钉住的主便签")
+	}
+}
+
+// 情况 1：原位无重叠 → 不位移，原位显示并聚焦。
+func TestSummonKeepsSpotWhenClear(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 600, 600
+	ctl, ops := newTestController(t, a, b)
+	idA := ctl.noteIDs()[0]
+
+	ctl.ToggleSlot(1) // 隐藏 a
+	ctl.ToggleSlot(1) // 召唤：原位无重叠
+	if len(ops.moves) != 0 {
+		t.Fatalf("原位无重叠不应位移: %v", ops.moves)
+	}
+	if ops.hidden[idA] {
+		t.Fatal("召唤后应可见")
+	}
+	if len(ops.focused) == 0 || ops.focused[len(ops.focused)-1] != idA {
+		t.Fatalf("召唤应聚焦: %v", ops.focused)
+	}
+}
+
+// 情况 2：原位被可见兄弟占据 → 装箱避让到 (340,8)；rec.X/Y 与 UpdatedAt 不动，px/py 更新。
+func TestSummonRelocatesWhenOccupied(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 100, 100
+	ctl, ops := newTestController(t, a, b)
+	idA := ctl.noteIDs()[0]
+	before := updatedAtForTest(ctl, idA)
+
+	ctl.ToggleSlot(1) // 隐藏 a
+	ops.moves = nil
+	ctl.ToggleSlot(1) // 召唤：原位被 b 占 → 避让
+	if len(ops.moves) != 1 {
+		t.Fatalf("应程序性位移一次: %v", ops.moves)
+	}
+	if mv := ops.moves[0]; mv.id != idA || mv.x != 340 || mv.y != 8 {
+		t.Fatalf("应避让到装箱空位 (340,8): %+v", mv)
+	}
+	if rec := recByID(t, ctl, idA); rec.X != 100 || rec.Y != 100 {
+		t.Fatalf("程序性位移不得写 rec.X/Y: %+v", rec)
+	}
+	if got := updatedAtForTest(ctl, idA); got != before {
+		t.Fatalf("位移不得刷 UpdatedAt: %d -> %d", before, got)
+	}
+	if px, py := ctl.livePosForTest(idA); px != 340 || py != 8 {
+		t.Fatalf("实时几何应更新为新位置: %d,%d", px, py)
+	}
+}
+
+// 情况 3：可见兄弟铺满全屏（4096x4096 巨型便签盖住所有装箱行带）→ 原位叠放不位移。
+func TestSummonStaysWhenScreenFull(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", model.MaxCoord, model.MaxCoord, true)
+	b.Slot = 2
+	b.X, b.Y = 8, 8
+	ctl, ops := newTestController(t, a, b)
+
+	ctl.ToggleSlot(1) // 隐藏 a
+	ctl.ToggleSlot(1) // 召唤：装箱无空位 → 原位
+	if len(ops.moves) != 0 {
+		t.Fatalf("屏幕已满应原位叠放，不应位移: %v", ops.moves)
+	}
+}
+
+// 负坐标是合法摆放：原位（负坐标）与可见兄弟相交同样触发避让。
+func TestSummonAvoidsNearNegativeOrigin(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = -200, -100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = -150, -50
+	ctl, ops := newTestController(t, a, b)
+
+	ctl.ToggleSlot(1)
+	ctl.ToggleSlot(1) // 召唤：负坐标原位被占 → 避让
+	if len(ops.moves) != 1 || ops.moves[0].x != 90 || ops.moves[0].y != 8 {
+		t.Fatalf("负坐标原位被占也应避让到 (90,8): %v", ops.moves)
+	}
+}
+
+// 隐藏便签不占桌面空间，不算障碍。
+func TestSummonIgnoresHiddenSiblings(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 100, 100
+	ctl, ops := newTestController(t, a, b)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+
+	ctl.ToggleSlot(1) // 隐藏 a
+	ctl.ToggleSlot(2) // 隐藏 b
+	if !ops.hidden[idA] || !ops.hidden[idB] {
+		t.Fatal("前置：两张都应已隐藏")
+	}
+	ctl.ToggleSlot(1) // 召唤 a：b 隐藏不占桌面 → 原位
+	if len(ops.moves) != 0 {
+		t.Fatalf("隐藏便签不算障碍，不应位移: %v", ops.moves)
+	}
+}
+
+// 集合切换连召逐张避让：f1 落位后成为 f2 的障碍，两者落位互不重叠也不压 b。
+func TestSummonSetSequentialAvoidance(t *testing.T) {
+	m := model.NewRecord("", 240, 220, true)
+	m.Slot = model.SlotMain
+	m.X, m.Y = 600, 600
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 100, 100
+	f1 := model.NewRecord("", 240, 220, true)
+	f1.Slot = model.SlotFree
+	f1.X, f1.Y = 100, 100
+	f2 := model.NewRecord("", 240, 220, true)
+	f2.Slot = model.SlotFree
+	f2.X, f2.Y = 100, 100
+	ctl, ops := newTestController(t, m, b, f1, f2)
+	ids := ctl.noteIDs()
+	mID, bID, f1ID, f2ID := ids[0], ids[1], ids[2], ids[3]
+
+	ctl.ToggleMainSet() // 全员钉住且可见 → 收起（m/f1/f2 隐藏，b 不参与）
+	if !ops.hidden[mID] || !ops.hidden[f1ID] || !ops.hidden[f2ID] {
+		t.Fatalf("前置：集合应已收起: %v", ops.hidden)
+	}
+	ops.moves = nil
+	ctl.ToggleMainSet() // 召唤：f1/f2 原位被 b 占，逐张避让
+	if len(ops.moves) != 2 {
+		t.Fatalf("f1/f2 应各位移一次: %v", ops.moves)
+	}
+	if mv := ops.moves[0]; mv.id != f1ID || mv.x != 340 || mv.y != 8 {
+		t.Fatalf("f1 应避让到 (340,8): %+v", mv)
+	}
+	if mv := ops.moves[1]; mv.id != f2ID || mv.x != 580 || mv.y != 8 {
+		t.Fatalf("f2 应避让到 (580,8)：障碍含 f1 新位置（m 在下行带，不阻第一行）: %+v", mv)
+	}
+	rects := map[string]Rect{
+		f1ID: {X: float32(ops.moves[0].x), Y: float32(ops.moves[0].y), W: 240, H: 220},
+		f2ID: {X: float32(ops.moves[1].x), Y: float32(ops.moves[1].y), W: 240, H: 220},
+		bID:  {X: 100, Y: 100, W: 240, H: 220},
+	}
+	for _, pair := range [][2]string{{f1ID, f2ID}, {f1ID, bID}, {f2ID, bID}} {
+		if rectsIntersect(rects[pair[0]], rects[pair[1]]) {
+			t.Fatalf("落位不应重叠: %v vs %v", rects[pair[0]], rects[pair[1]])
+		}
 	}
 }

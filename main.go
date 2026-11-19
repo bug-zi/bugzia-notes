@@ -43,7 +43,7 @@ func main() {
 	}
 
 	hotkeyMgr := &hotkey.Manager{}
-	ops := &wailsOps{}
+	ops := &wailsOps{suppressMove: map[string]bool{}}
 	ctl := wm.NewController(ops, st)
 	ops.ctl = ctl
 
@@ -446,6 +446,9 @@ func updateFailDialog(app *application.App, msg string) {
 type wailsOps struct {
 	app *application.App
 	ctl *wm.Controller
+	// suppressMove 程序性位移标记（v2.3.0）：MoveNote 移动期间 WindowDidMove
+	// 不得记为用户拖动。热键经 InvokeAsync、窗口事件回调都在主线程，免锁。
+	suppressMove map[string]bool
 }
 
 func (o *wailsOps) lookup(id string) *application.WebviewWindow {
@@ -487,6 +490,10 @@ func (o *wailsOps) CreateNoteWindow(rec model.NoteRecord, x, y, w, h int, hidden
 
 	// 几何跟踪（Go 侧窗口事件，前端零参与）
 	win.OnWindowEvent(events.Common.WindowDidMove, func(*application.WindowEvent) {
+		if o.suppressMove[rec.ID] {
+			delete(o.suppressMove, rec.ID) // 程序性位移：不记为用户拖动
+			return
+		}
 		mx, my := win.Position()
 		o.ctl.NoteMoved(rec.ID, mx, my)
 	})
@@ -571,6 +578,22 @@ func (o *wailsOps) FocusNote(id string) {
 	if win := o.lookup(id); win != nil {
 		win.Focus()
 	}
+}
+
+func (o *wailsOps) MoveNote(id string, x, y int) {
+	win := o.lookup(id)
+	if win == nil {
+		log.Printf("[move] 窗口不存在: %s -> (%d,%d)", id, x, y)
+		return
+	}
+	bx, by := win.Position()
+	o.suppressMove[id] = true
+	win.SetPosition(x, y)
+	ax, ay := win.Position()
+	if o.suppressMove[id] {
+		delete(o.suppressMove, id) // 事件未触发（如坐标未变）时兜底，防吞下次真实拖动
+	}
+	log.Printf("[move] %s 目标=(%d,%d) 实际 (%d,%d)=>(%d,%d)", id, x, y, bx, by, ax, ay)
 }
 
 func (o *wailsOps) Notify(title, body string) {
