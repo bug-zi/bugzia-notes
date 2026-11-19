@@ -31,9 +31,10 @@ type WindowOps interface {
 	HideNote(id string)
 	CloseNote(id string)
 	FocusNote(id string)
-	// MoveNote 程序性位移召唤便签窗口（v2.3.0 避重叠摆放）；实现必须防止
-	// 该移动触发 WindowDidMove 被记为用户拖动（写 rec.X/Y + 刷 UpdatedAt）。
-	MoveNote(id string, x, y int)
+	// GlideNote 弹开动画（v3.0.0）：把窗口从当前视觉位置步进滑到 (x,y)——状态已由
+	// 控制器先写，动画纯视觉追赶。delayMs 错峰启动；ms<=0 直落。实现须在动画全程
+	// 抑制 WindowDidMove 记账（用户拖动语义），同窗口再次调用取旧起新。
+	GlideNote(id string, x, y, delayMs, ms int)
 	Notify(title, body string)
 	// PrimaryScreen 主屏逻辑尺寸（装箱用）。
 	PrimaryScreen() (w, h float32)
@@ -269,23 +270,26 @@ func (c *Controller) ToggleMainSet() {
 		}
 	}
 	promoted := make([]string, 0)
-	summoned := make([]string, 0)
+	summoned := make([]*NoteLive, 0)
 	for _, n := range set {
 		if !n.rec.Pinned {
 			n.rec.Pinned = true // 仅改层级，不刷 UpdatedAt
 			promoted = append(promoted, n.rec.ID)
 		}
 		if !c.visible[n.rec.ID] {
-			summoned = append(summoned, n.rec.ID)
+			summoned = append(summoned, n)
 		}
 	}
 	c.mu.Unlock()
 
+	// 连召按 UpdatedAt 升序落地：最活跃者最后落地、必保原位（v3.0.0 弹开语义）
+	sort.Slice(summoned, func(i, j int) bool { return summoned[i].rec.UpdatedAt < summoned[j].rec.UpdatedAt })
+
 	if main == nil {
 		c.createSlotNote(model.SlotMain, false) // 补建：即钉住、装箱、needsFocus
 	}
-	for _, id := range summoned {
-		c.summonNote(id, false)
+	for _, n := range summoned {
+		c.summonNote(n.rec.ID, false)
 	}
 	for _, id := range promoted {
 		c.ops.SetPinned(id, true)
@@ -387,31 +391,8 @@ func originLocked(n *NoteLive) (int, int, bool) {
 	return 0, 0, false
 }
 
-// obstacleRectsLocked 当前全部可见便签的矩形（排除 excludeID；位置规则同
-// originLocked，哨兵记录不参与）。隐藏便签不占桌面，不算障碍。须持锁。
-func (c *Controller) obstacleRectsLocked(excludeID string) []Rect {
-	rects := make([]Rect, 0, len(c.notes))
-	for _, n := range c.notes {
-		if n.rec.ID == excludeID || !c.visible[n.rec.ID] {
-			continue
-		}
-		sx, sy, ok := originLocked(n)
-		if !ok {
-			continue
-		}
-		rects = append(rects, Rect{
-			X: float32(sx), Y: float32(sy),
-			W: float32(model.ClampW(n.rec.W)), H: float32(model.ClampH(n.rec.H)),
-		})
-	}
-	return rects
-}
-
-// summonNote 召唤隐藏便签（三入口共用）：原位无重叠 → 原位；被占 → 装箱找
-// 空位（落点复核不重叠，复核兼识别屏幕满——PackTopLeft 无空位时回退左上锚点
-// 可能重叠）；屏幕满 → 原位叠放（置顶由钉住 TOPMOST + Focus 保证）。位移是
-// 程序性摆放：只更新实时 px/py，不写 rec.X/Y（哨兵语义不变，下次召唤重新
-// 判定）。focus=true 时聚焦并记为当前便签。
+// summonNote 召唤隐藏便签（三入口共用，v3.0.0 弹开式）：原位落地（Show + 记账），
+// 随后 pushPass 弹开与之重叠的可见便签。focus=true 时聚焦并记为当前便签。
 func (c *Controller) summonNote(id string, focus bool) {
 	c.mu.Lock()
 	n := c.findLocked(id)
@@ -419,48 +400,8 @@ func (c *Controller) summonNote(id string, focus bool) {
 		c.mu.Unlock()
 		return
 	}
-	w := float32(model.ClampW(n.rec.W))
-	h := float32(model.ClampH(n.rec.H))
-	ox, oy, hasOrigin := originLocked(n)
-	rects := c.obstacleRectsLocked(n.rec.ID)
 	c.mu.Unlock()
 
-	moved := false
-	tx, ty := ox, oy
-	if hasOrigin {
-		x, y := ox, oy
-		self := Rect{X: float32(ox), Y: float32(oy), W: w, H: h}
-		overlapped := false
-		for _, r := range rects {
-			if rectsIntersect(self, r) {
-				overlapped = true
-				break
-			}
-		}
-		if overlapped {
-			sw, sh := c.ops.PrimaryScreen()
-			nx, ny := PackTopLeft(rects, w, h, sw, sh)
-			cand := Rect{X: nx, Y: ny, W: w, H: h}
-			clear := true
-			for _, r := range rects {
-				if rectsIntersect(cand, r) {
-					clear = false // 情况 3：屏幕满，装箱回退点也重叠
-					break
-				}
-			}
-			if clear {
-				x, y = int(math.Round(float64(nx))), int(math.Round(float64(ny)))
-			}
-		}
-		if x != ox || y != oy {
-			moved, tx, ty = true, x, y
-			c.mu.Lock()
-			n.px, n.py = x, y
-			c.mu.Unlock()
-			c.ops.MoveNote(id, x, y)
-		}
-	}
-	log.Printf("[summon] %s moved=%v target=(%d,%d) 障碍=%d", id, moved, tx, ty, len(rects))
 	c.ops.ShowNote(id)
 	c.mu.Lock()
 	c.visible[id] = true
@@ -471,6 +412,58 @@ func (c *Controller) summonNote(id string, focus bool) {
 		c.activeID = id // 召唤显示即成为当前便签
 		c.mu.Unlock()
 	}
+	c.pushPass(n)
+}
+
+// pushPass 落地便签的弹开趟：收集其余可见便签实时几何 → ResolveOverlaps 解析
+//（级联/兜底）→ 状态先写（px/py；placed 同步 rec.X/Y、哨兵不动、不刷 UpdatedAt）
+// → GlideNote 动画视觉追赶（瀑布错峰）。整趟一次防抖落盘。
+func (c *Controller) pushPass(self *NoteLive) {
+	c.mu.Lock()
+	selfRect := Rect{
+		X: float32(self.px), Y: float32(self.py),
+		W: float32(model.ClampW(self.rec.W)), H: float32(model.ClampH(self.rec.H)),
+	}
+	notes := make([]PushNote, 0, len(c.notes))
+	lives := map[string]*NoteLive{}
+	for _, n := range c.notes {
+		if n.rec.ID == self.rec.ID || !c.visible[n.rec.ID] {
+			continue
+		}
+		sx, sy, ok := originLocked(n)
+		if !ok {
+			continue
+		}
+		notes = append(notes, PushNote{
+			ID: n.rec.ID,
+			Rect: Rect{
+				X: float32(sx), Y: float32(sy),
+				W: float32(model.ClampW(n.rec.W)), H: float32(model.ClampH(n.rec.H)),
+			},
+		})
+		lives[n.rec.ID] = n
+	}
+	c.mu.Unlock()
+	if len(notes) == 0 {
+		return
+	}
+	sw, sh := c.ops.PrimaryScreen()
+	pushes := ResolveOverlaps(selfRect, notes, sw, sh)
+	if len(pushes) == 0 {
+		return
+	}
+	for i, p := range pushes {
+		n := lives[p.ID]
+		c.mu.Lock()
+		n.px, n.py = p.X, p.Y
+		if n.rec.X != model.SentinelCoord && n.rec.Y != model.SentinelCoord {
+			n.rec.X, n.rec.Y = p.X, p.Y // 弹后位置记住（placed）；哨兵保持哨兵
+		}
+		c.mu.Unlock()
+		c.ops.GlideNote(p.ID, p.X, p.Y, i*GlideStaggerMs, GlideMs)
+	}
+	c.scheduleSave()
+	log.Printf("[summon] %s 落地原位，弹开 %d 张", self.rec.ID, len(pushes))
 }
 
 // ── 注水与前端事件入口 ──────────────────────────────────────────────────

@@ -10,9 +10,11 @@ import (
 	"image/color"
 	"image/png"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -43,7 +45,7 @@ func main() {
 	}
 
 	hotkeyMgr := &hotkey.Manager{}
-	ops := &wailsOps{suppressMove: map[string]bool{}}
+	ops := &wailsOps{suppressMove: map[string]bool{}, animDone: map[string]chan struct{}{}}
 	ctl := wm.NewController(ops, st)
 	ops.ctl = ctl
 
@@ -446,9 +448,14 @@ func updateFailDialog(app *application.App, msg string) {
 type wailsOps struct {
 	app *application.App
 	ctl *wm.Controller
-	// suppressMove 程序性位移标记（v2.3.0）：MoveNote 移动期间 WindowDidMove
-	// 不得记为用户拖动。热键经 InvokeAsync、窗口事件回调都在主线程，免锁。
+	animMu sync.Mutex
+	// suppressMove 程序性移动标记：GlideNote 动画期间 WindowDidMove 不记为用户
+	// 拖动。所有权属动画持有者（置位/结束清除），事件回调只读。主线程事件回调与
+	// 动画 goroutine 都会访问，须经 animMu（动画内严禁持锁调用 SetPosition——
+	// InvokeSync 等主线程会死锁）。
 	suppressMove map[string]bool
+	// animDone 进行中窗口动画的取消信号；同窗口新动画 close 旧信号取旧起新。
+	animDone map[string]chan struct{}
 }
 
 func (o *wailsOps) lookup(id string) *application.WebviewWindow {
@@ -490,9 +497,11 @@ func (o *wailsOps) CreateNoteWindow(rec model.NoteRecord, x, y, w, h int, hidden
 
 	// 几何跟踪（Go 侧窗口事件，前端零参与）
 	win.OnWindowEvent(events.Common.WindowDidMove, func(*application.WindowEvent) {
-		if o.suppressMove[rec.ID] {
-			delete(o.suppressMove, rec.ID) // 程序性位移：不记为用户拖动
-			return
+		o.animMu.Lock()
+		sup := o.suppressMove[rec.ID]
+		o.animMu.Unlock()
+		if sup {
+			return // 程序性移动（弹开动画）：不记为用户拖动
 		}
 		mx, my := win.Position()
 		o.ctl.NoteMoved(rec.ID, mx, my)
@@ -580,20 +589,66 @@ func (o *wailsOps) FocusNote(id string) {
 	}
 }
 
-func (o *wailsOps) MoveNote(id string, x, y int) {
-	win := o.lookup(id)
-	if win == nil {
-		log.Printf("[move] 窗口不存在: %s -> (%d,%d)", id, x, y)
-		return
+const glideStepMs = 16
+
+// GlideNote 弹开动画：步进 tween（easeOutCubic），全程抑制 WindowDidMove 记账；
+// 同窗口再次调用 close 旧取消信号取旧起新。锁只护 map 访问，SetPosition 在锁外
+//（持锁 InvokeSync 等主线程会死锁）。
+func (o *wailsOps) GlideNote(id string, x, y, delayMs, ms int) {
+	o.animMu.Lock()
+	if done, ok := o.animDone[id]; ok {
+		close(done)
 	}
-	bx, by := win.Position()
+	done := make(chan struct{})
+	o.animDone[id] = done
 	o.suppressMove[id] = true
-	win.SetPosition(x, y)
-	ax, ay := win.Position()
-	if o.suppressMove[id] {
-		delete(o.suppressMove, id) // 事件未触发（如坐标未变）时兜底，防吞下次真实拖动
+	o.animMu.Unlock()
+
+	go func() {
+		if delayMs > 0 {
+			select {
+			case <-done:
+				o.finishGlide(id, done)
+				return
+			case <-time.After(time.Duration(delayMs) * time.Millisecond):
+			}
+		}
+		win := o.lookup(id)
+		if win == nil {
+			o.finishGlide(id, done)
+			return
+		}
+		sx, sy := win.Position()
+		steps := ms / glideStepMs
+		if steps < 1 {
+			steps = 1
+		}
+		for i := 1; i <= steps; i++ {
+			select {
+			case <-done:
+				o.finishGlide(id, done)
+				return
+			default:
+			}
+			t := float64(i) / float64(steps)
+			e := 1 - (1-t)*(1-t)*(1-t) // easeOutCubic
+			nx := sx + int(math.Round(float64(x-sx)*e))
+			ny := sy + int(math.Round(float64(y-sy)*e))
+			win.SetPosition(nx, ny)
+			time.Sleep(glideStepMs * time.Millisecond)
+		}
+		win.SetPosition(x, y) // 精确落点
+		o.finishGlide(id, done)
+	}()
+}
+
+func (o *wailsOps) finishGlide(id string, done chan struct{}) {
+	o.animMu.Lock()
+	if o.animDone[id] == done { // 仍是本动画持有标记才清理（被新动画接管则不动）
+		delete(o.animDone, id)
+		delete(o.suppressMove, id)
 	}
-	log.Printf("[move] %s 目标=(%d,%d) 实际 (%d,%d)=>(%d,%d)", id, x, y, bx, by, ax, ay)
+	o.animMu.Unlock()
 }
 
 func (o *wailsOps) Notify(title, body string) {
