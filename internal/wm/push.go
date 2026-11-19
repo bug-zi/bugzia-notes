@@ -9,7 +9,8 @@ const (
 	GlideStaggerMs = 40
 )
 
-// PushNote 一张候选被弹便签的输入（实时几何：px/py 优先 + 缩放后 ClampW/H）。
+// PushNote 一张候选被弹便签的输入（实时几何：px/py + 实时尺寸 rw/rh 优先、
+// rec Clamp 值回退）。
 type PushNote struct {
 	ID   string
 	Rect Rect

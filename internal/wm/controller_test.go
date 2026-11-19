@@ -1145,3 +1145,245 @@ func TestSummonSetMutualPushUpdatedAtOrder(t *testing.T) {
 		}
 	}
 }
+
+// liveSizeForTest 读实时尺寸 rw/rh（缩放会话值；0=未置）。
+func (c *Controller) liveSizeForTest(id string) (int, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := c.findLocked(id); n != nil {
+		return n.rw, n.rh
+	}
+	return 0, 0
+}
+
+// 拖动 tick 压到可见便签 → 对方被弹开（最小位移=下）；tick 只写实时几何，
+// 不写被拖便签 rec、不刷其 UpdatedAt；被弹者 placed 写 rec、哨兵语义与
+// UpdatedAt 同 v3.0.0。
+func TestDragLiveTickPushesOverlap(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 500, 500
+	ctl, ops := newTestController(t, a, b)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+	beforeA, beforeB := updatedAtForTest(ctl, idA), updatedAtForTest(ctl, idB)
+
+	ctl.DragLiveTick(idA, 450, 450, 240, 220) // a(450-690,450-670) 压 b(500-740,500-720)
+
+	if len(ops.glides) != 1 {
+		t.Fatalf("只有被弹者 glide: %+v", ops.glides)
+	}
+	if g := ops.glides[0]; g.id != idB || g.x != 500 || g.y != 678 || g.delayMs != 0 || g.ms != GlideMs {
+		t.Fatalf("b 应下弹 (500,678)（dy178 < dx198）: %+v", g)
+	}
+	if rec := recByID(t, ctl, idA); rec.X != 100 || rec.Y != 100 {
+		t.Fatalf("tick 不得写被拖便签 rec: %+v", rec)
+	}
+	if got := updatedAtForTest(ctl, idA); got != beforeA {
+		t.Fatal("tick 不得刷被拖便签 UpdatedAt")
+	}
+	if rec := recByID(t, ctl, idB); rec.X != 500 || rec.Y != 678 {
+		t.Fatalf("弹后位置应记住（placed 写 rec）: %+v", rec)
+	}
+	if got := updatedAtForTest(ctl, idB); got != beforeB {
+		t.Fatal("弹开不得刷被弹者 UpdatedAt")
+	}
+	if x, y := ctl.livePosForTest(idA); x != 450 || y != 450 {
+		t.Fatalf("被拖便签实时位置应更新: %d,%d", x, y)
+	}
+	if x, y := ctl.livePosForTest(idB); x != 500 || y != 678 {
+		t.Fatalf("被弹者实时位置应为新位置: %d,%d", x, y)
+	}
+	if w, h := ctl.liveSizeForTest(idA); w != 240 || h != 220 {
+		t.Fatalf("tick 应写实时尺寸: %d,%d", w, h)
+	}
+}
+
+// 无重叠 tick 纯记账，不弹开。
+func TestDragLiveTickNoOverlapNoop(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 500, 500
+	ctl, ops := newTestController(t, a, b)
+
+	ctl.DragLiveTick(ctl.noteIDs()[0], 800, 800, 240, 220)
+	if len(ops.glides) != 0 {
+		t.Fatalf("无重叠不应弹开: %+v", ops.glides)
+	}
+}
+
+// 控制器路径级联：a(8,8,300,200) 压 b(150,100,160,120) → b 下弹 (150,216)
+//（dy116 < dx166）；b 新矩形 y 216-336 压 c(158,308,160,120) → c 下弹 (158,344)
+//（dy36 < dx160）。尺寸取 ≥ 最小尺寸（160x120），ClampW/H 不改值。
+func TestDragLiveTickCascade(t *testing.T) {
+	a := model.NewRecord("", 300, 200, true)
+	a.Slot = 1
+	a.X, a.Y = 8, 8
+	b := model.NewRecord("", 160, 120, true)
+	b.Slot = 2
+	b.X, b.Y = 150, 100
+	c := model.NewRecord("", 160, 120, true)
+	c.Slot = 3
+	c.X, c.Y = 158, 308
+	ctl, ops := newTestController(t, a, b, c)
+	ids := ctl.noteIDs()
+
+	ctl.DragLiveTick(ids[0], 8, 8, 300, 200)
+	if len(ops.glides) != 2 {
+		t.Fatalf("级联应弹 b、c 两张: %+v", ops.glides)
+	}
+	if g := ops.glides[0]; g.id != ids[1] || g.x != 150 || g.y != 216 || g.delayMs != 0 {
+		t.Fatalf("b 应先弹 (150,216): %+v", g)
+	}
+	if g := ops.glides[1]; g.id != ids[2] || g.x != 158 || g.y != 344 || g.delayMs != GlideStaggerMs {
+		t.Fatalf("c 应随后弹 (158,344)（错峰 40ms）: %+v", g)
+	}
+}
+
+// 缩放 tick：实时尺寸参与（拖拽边缘变大压到兄弟）。
+func TestDragLiveTickResizeParticipates(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 400, 100
+	ctl, ops := newTestController(t, a, b)
+	idB := ctl.noteIDs()[1]
+	beforeB := updatedAtForTest(ctl, idB)
+
+	ctl.DragLiveTick(ctl.noteIDs()[0], 100, 100, 360, 220) // a 变宽 100-460，压 b(400-640)
+
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 468 || ops.glides[0].y != 100 {
+		t.Fatalf("b 应右弹 (468,100)（dx68 < dy228）: %+v", ops.glides)
+	}
+	if w, h := ctl.liveSizeForTest(ctl.noteIDs()[0]); w != 360 || h != 220 {
+		t.Fatalf("缩放 tick 应写实时尺寸: %d,%d", w, h)
+	}
+	if rec := recByID(t, ctl, ctl.noteIDs()[0]); rec.W != 240 || rec.H != 220 {
+		t.Fatalf("tick 不得写 rec 尺寸: %+v", rec)
+	}
+	if got := updatedAtForTest(ctl, idB); got != beforeB {
+		t.Fatal("弹开不得刷被弹者 UpdatedAt")
+	}
+}
+
+// pushPass 读兄弟实时尺寸：b 被缩 tick 成 100x100 后，召唤 a 的弹开按实时
+// 尺寸计算（旧实现按 rec 240x220 会走下弹 (1600,328)，新实现右弹 (1748,100)）。
+func TestDragLiveTickSiblingLiveSize(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 1500, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 1600, 100
+	ctl, ops := newTestController(t, a, b)
+	idB := ctl.noteIDs()[1]
+
+	ctl.ToggleSlot(1)                          // 隐藏 a（b 保持可见）
+	ctl.DragLiveTick(idB, 1600, 100, 100, 100) // b 实时尺寸缩为 160x120（Clamp 下限）
+	ops.glides = nil
+	ctl.ToggleSlot(1) // 召唤 a：压 b(1600,100,160,120)
+
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 1748 || ops.glides[0].y != 100 {
+		t.Fatalf("b 应按实时尺寸右弹 (1748,100)：1748+100=1848 ≤ 1912 可行: %+v", ops.glides)
+	}
+	if rec := recByID(t, ctl, idB); rec.W != 240 || rec.H != 220 {
+		t.Fatalf("tick 不得写 rec 尺寸: %+v", rec)
+	}
+}
+
+// 屏幕满：被压者四向+装箱都无解 → 接受重叠，无 glide。
+func TestDragLiveTickAcceptsOverlapWhenFull(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 8, 8
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 100, 100
+	ctl, ops := newTestController(t, a, b)
+	idA := ctl.noteIDs()[0]
+
+	ctl.DragLiveTick(idA, 8, 8, model.MaxCoord, model.MaxCoord)
+	if len(ops.glides) != 0 {
+		t.Fatalf("屏幕满应接受重叠: %+v", ops.glides)
+	}
+	if x, y := ctl.livePosForTest(idA); x != 8 || y != 8 {
+		t.Fatalf("被拖便签原位不动: %d,%d", x, y)
+	}
+}
+
+// NoteMoved 记账兜底：松手残留/停顿记账点/键盘移动（无会话事件）也补弹开趟。
+func TestNoteMovedFallbackPush(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 500, 500
+	ctl, ops := newTestController(t, a, b)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+	beforeB := updatedAtForTest(ctl, idB)
+
+	ctl.NoteMoved(idA, 450, 450)
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 500 || ops.glides[0].y != 678 {
+		t.Fatalf("记账兜底应弹开 b (500,678): %+v", ops.glides)
+	}
+	if rec := recByID(t, ctl, idA); rec.X != 450 || rec.Y != 450 {
+		t.Fatalf("NoteMoved 语义不变（写 rec）: %+v", rec)
+	}
+	if got := updatedAtForTest(ctl, idB); got != beforeB {
+		t.Fatal("兜底弹开不得刷被弹者 UpdatedAt")
+	}
+}
+
+// NoteResized 记账兜底：缩放变大压到兄弟 + 实时尺寸清零（回退 rec 值参与计算）。
+func TestNoteResizedFallbackPush(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 400, 100
+	ctl, ops := newTestController(t, a, b)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+
+	ctl.DragLiveTick(idA, 100, 100, 200, 200) // 会话中实时尺寸 200x200
+	if w, h := ctl.liveSizeForTest(idA); w != 200 || h != 200 {
+		t.Fatalf("前置 tick 应写实时尺寸: %d,%d", w, h)
+	}
+	ctl.NoteResized(idA, 360, 220) // 松手记账 360x220 → 实时尺寸清零回退 rec
+
+	if w, h := ctl.liveSizeForTest(idA); w != 0 || h != 0 {
+		t.Fatalf("记账后实时尺寸应清零: %d,%d", w, h)
+	}
+	if len(ops.glides) != 1 || ops.glides[0].id != idB || ops.glides[0].x != 468 || ops.glides[0].y != 100 {
+		t.Fatalf("缩放兜底应弹开 b (468,100)：按 rec 360 宽计算: %+v", ops.glides)
+	}
+	if rec := recByID(t, ctl, idA); rec.W != 360 || rec.H != 220 {
+		t.Fatalf("NoteResized 语义不变（写 rec）: %+v", rec)
+	}
+}
+
+// 未钉便签拖压钉住便签：钉住的同样被挤开（参与不分钉住）。
+func TestDragLiveTickPushesPinnedToo(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.X, a.Y = 100, 100
+	b := model.NewRecord("", 240, 220, true)
+	b.Slot = 2
+	b.X, b.Y = 500, 500
+	ctl, ops := newTestController(t, a, b)
+	idA, idB := ctl.noteIDs()[0], ctl.noteIDs()[1]
+	ctl.setPinnedForTest(idB, true)
+
+	ctl.DragLiveTick(idA, 450, 450, 240, 220)
+	if len(ops.glides) != 1 || ops.glides[0].id != idB {
+		t.Fatalf("钉住的也应被挤开: %+v", ops.glides)
+	}
+}

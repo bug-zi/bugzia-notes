@@ -14,6 +14,8 @@ bugzia-notes — Windows 便签桌面应用（Go + Wails v3），把 Bugzia 桌�
 
 **v2.3.0（2026-11-19，已验收）：召唤智能避重叠——三召唤入口统一 `Controller.summonNote`：原位无重叠→原位；被占→`PackTopLeft` 对可见兄弟便签装箱找空位（落点复核兼识别屏幕满）；屏幕满→原位叠放（置顶由钉住 TOPMOST+Focus 保证）。`WindowOps.MoveNote` 程序性位移带 `suppressMove` 抑制标记（`WindowDidMove` 不误记为用户拖动），位移只更新实时 px/py、不写 rec.X/Y。** spec/plan 见 `docs/project/便签/archive/2026-11-19-v2.3.0-summon-overlap-avoid-{design,plan}.md`（已归档）。
 
+**v3.0.0（2026-11-19，已验收）：召唤弹开式避重叠——召唤便签原位落地，重叠的可见便签被弹开（右/下/左/上迭代越障取最小位移、级联传导、装箱兜底、屏幕满接受重叠）；连召批次按 UpdatedAt 升序落地（最活跃者最后落地必保原位）；`WindowOps.GlideNote` 步进 tween 动画（250ms easeOutCubic、40ms 错峰、同窗口取旧起新），状态先写动画纯视觉追赶；弹后位置记住（placed 写 rec.X/Y、哨兵保持哨兵、不刷 UpdatedAt）。** spec/plan 见 `docs/project/便签/archive/2026-11-19-v3.0.0-summon-push-away-{design,plan}.md`（已归档）。
+
 ## 文档体系与维护权责（最重要）
 
 `docs/` 目录是开发者与 AI 共同维护的项目文档库（2026-11-17 搭建，旧 superpowers 文档已迁入），权责划分如下：
@@ -76,7 +78,7 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 - x/y = -1 哨兵表示「未被用户放置」，走 `packTopLeft` 贪心装箱定位（从 bugzia `noteWindow.ts` 移植，PLACE_MARGIN 8）；装箱避让读兄弟便签的最近实际摆放位置（`NoteLive.px/py`）；rec.X/Y 只在用户拖动（`NoteMoved`）时写入——程序性摆放不写回，保持哨兵语义
 - **便签集合切换键（`toggle` 键，v2.2.0 起为 `ToggleMainSet`）**：集合 = 主便签 + 全部自由便签，**辅助便签不参与**（仍由各自键管理）。展开 = 集合内每张钉住且可见（主便签缺失即未展开）：未展开 → 补建缺失的主便签（即钉住、装箱）+ 召唤全部隐藏成员 + 未钉成员升钉保证可见（防空转，升钉不刷 UpdatedAt）+ 聚焦集合内 UpdatedAt 最大一张（补建场景聚焦走新主便签的 needsFocus）；已展开 → 集合全部收起。无自由便签时退化为单主便签切换；升钉/补建后统一一次防抖落盘
 - **新建便签键（`main` 键，v2.1.0 回归）**：`CreateOrSummonFree`——有隐藏自由便签先召唤 UpdatedAt 最大的一张（覆盖静默启动恢复），否则新建一张自由便签（即钉住、装箱定位、聚焦、成为当前便签）；连按连建
-- **召唤智能避重叠（v2.3.0，`summonNote` 三入口共用）**：障碍 = **可见**兄弟便签矩形（隐藏不占桌面；位置实时 px/py 优先、rec.X/Y 兜底，负坐标合法；`rectsIntersect` 判交）；原位无重叠 → 原位；被占 → `PackTopLeft` 装箱找空位（落点复核，复核失败 = 屏幕满）；屏幕满 → 原位叠放（置顶由钉住 TOPMOST+Focus 保证，**未钉维持沉底语义不例外**）；位移走 `WindowOps.MoveNote`（wailsOps `suppressMove` 标记防 `WindowDidMove` 误记为拖动、事件未触发时兜底清除防吞真实拖动），只更新实时 px/py 不写 rec.X/Y（下次召唤重新判定）；集合连召逐张处理（先落位成为后者障碍）；`alt+z` 销毁确认显示不走避让
+- **召唤弹开式避重叠（v3.0.0，`summonNote` 原位落地 + `pushPass`）**：几何全用实时值（位置 px/py 优先、rec.X/Y 兜底，尺寸 ClampW/H 缩放后值；`rectsIntersect` 判交，隐藏便签不占桌面）；召唤便签**原位落地绝不自己位移**，与之重叠的可见便签被弹开——右/下/左/上迭代越过已落地矩形取最小位移（平手偏右/下、`pushGap`=8 间隙、完整在屏内），四向不可行→装箱找空位，屏幕满→接受重叠（置顶由钉住 TOPMOST+Focus 保证）；级联自动传导（被弹者落点撞未处理便签→继续弹，每张至多一次）；连召批次按 **UpdatedAt 升序**逐张落地，最活跃者最后落地必保原位；`WindowOps.GlideNote` 动画纯视觉追赶（**状态先写**：px/py + placed 补写 rec.X/Y（哨兵不动）、不刷 UpdatedAt，整趟一次防抖落盘；250ms easeOutCubic、16ms 步进、40ms 错峰、同窗口取旧起新）；`suppressMove` 标记归动画持有者（事件回调只读、animMu 护 map、SetPosition 严禁持锁调用防 InvokeSync 死锁）；`alt+z` 销毁确认显示不走避让
 - **自由便签（v2.1.0）**：`NoteRecord.Slot = model.SlotFree(-1)`，与槽位便签同列表同存储；无专属显隐键（静默启动恢复的靠新建键召唤，其余常显）；未锁定样式 = 全局默认（玫红）
 - **总量上限 20（v2.1.0，`model.MaxNotes`）**：槽位便签 + 自由便签共享；`model.SlotCount=6` 只表达槽位数（`ToggleSlot` 越界、`ImportRecords` 上限用 SlotCount）
 - **便签标题（v2.1.0）**：`NoteRecord.Title`，默认「便签n」（n 从创建后总数起试，重名顺延；`model.NextDefaultTitle`）；显示在便签头部「设置」左侧，双击行内编辑（Enter/失焦提交、Esc 还原、rune 截 30、空白不覆盖），走 `note:renamed` 事件 → `Controller.SetTitle` → 单窗重推 + 防抖落盘；Win32 窗口 Title 仍 = id 不变
@@ -106,6 +108,6 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 
 ## 测试策略
 
-- 纯逻辑单测（go test）：`packTopLeft` 装箱（重叠 / 出屏 / 空屏 / 行满 / 负坐标）、存储原子写与损坏回退、notes v1→v3 / v2→v3 标题迁移、settings v1→v2 迁移、配置迁移解析、防抖合写、快捷键八键解析、控制器 `ToggleSlot` 三态/槽位唯一/启动补建主便签/销毁链/样式三级优先、`ToggleMainSet` 召唤升钉/收起/补建主便签/空集合/辅助隔离/升钉不刷 UpdatedAt、`CreateOrSummonFree` 三态/总量上限 20/默认标题编号顺延/`SetTitle` 守卫、`summonNote` 避重叠三情况/负坐标原位/隐藏不算障碍/集合连召避让链/位移不写 rec.X/Y 不刷 UpdatedAt（WindowOps 内存替身）
-- 手测闸口（设计文档第 15 节，全部通过才算交付）：新建→编辑→中文 IME→失焦提交；拖动 / 缩放 / 重启后钉住便签恢复；钉住置顶 / 沉底 / 集合切换键召唤收起且不干涉辅助便签；销毁确认（按钮 / Y/N / `alt+z`）；复制、上限提示、样式实时生效；召唤避重叠（三入口 × 原位 / 避让 / 屏幕满置顶）、避让位移后拖动重启恢复；配置迁移 / 单实例 / 托盘退出；更新日志弹窗（单例 / 当前版本高亮）
+- 纯逻辑单测（go test）：`packTopLeft` 装箱（重叠 / 出屏 / 空屏 / 行满 / 负坐标）、存储原子写与损坏回退、notes v1→v3 / v2→v3 标题迁移、settings v1→v2 迁移、配置迁移解析、防抖合写、快捷键八键解析、控制器 `ToggleSlot` 三态/槽位唯一/启动补建主便签/销毁链/样式三级优先、`ToggleMainSet` 召唤升钉/收起/补建主便签/空集合/辅助隔离/升钉不刷 UpdatedAt、`CreateOrSummonFree` 三态/总量上限 20/默认标题编号顺延/`SetTitle` 守卫、`ResolveOverlaps` 弹开七分支（平手偏右/最小位移/级联/级联链/装箱兜底/屏幕满接受重叠/无重叠不动）、`summonNote` 弹开语义（原位落地/被弹者 glide/负坐标/屏幕满/弹后写 rec 不刷 UpdatedAt）/连召互推活跃度升序（WindowOps 内存替身）
+- 手测闸口（设计文档第 15 节，全部通过才算交付）：新建→编辑→中文 IME→失焦提交；拖动 / 缩放 / 重启后钉住便签恢复；钉住置顶 / 沉底 / 集合切换键召唤收起且不干涉辅助便签；销毁确认（按钮 / Y/N / `alt+z`）；复制、上限提示、样式实时生效；召唤弹开（三入口：动画弹开 / 级联 / 屏幕满置顶）、弹后重启恢复弹后位、缩放尺寸参与弹开；配置迁移 / 单实例 / 托盘退出；更新日志弹窗（单例 / 当前版本高亮）
 - 平台只验收 Windows 10/11；代码不写死 Windows（Win32 部分带 `//go:build windows` + 非 Windows 空实现），但不做其他平台适配调优

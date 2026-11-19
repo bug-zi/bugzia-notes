@@ -45,7 +45,7 @@ func main() {
 	}
 
 	hotkeyMgr := &hotkey.Manager{}
-	ops := &wailsOps{suppressMove: map[string]bool{}, animDone: map[string]chan struct{}{}}
+	ops := &wailsOps{suppressMove: map[string]bool{}, animDone: map[string]chan struct{}{}, dragSessions: map[string]chan struct{}{}}
 	ctl := wm.NewController(ops, st)
 	ops.ctl = ctl
 
@@ -456,6 +456,10 @@ type wailsOps struct {
 	suppressMove map[string]bool
 	// animDone 进行中窗口动画的取消信号；同窗口新动画 close 旧信号取旧起新。
 	animDone map[string]chan struct{}
+	// dragSessions 拖动/缩放手势会话采样信号（v3.1.0）：Start 起 50ms 采样
+	// goroutine，End/窗口消失即停。同窗口重复 Start 取旧起新；与动画 map 同类
+	// 资源，共用 animMu 护表。
+	dragSessions map[string]chan struct{}
 }
 
 func (o *wailsOps) lookup(id string) *application.WebviewWindow {
@@ -509,6 +513,22 @@ func (o *wailsOps) CreateNoteWindow(rec model.NoteRecord, x, y, w, h int, hidden
 	win.OnWindowEvent(events.Common.WindowDidResize, func(*application.WindowEvent) {
 		mw, mh := win.Size()
 		o.ctl.NoteResized(rec.ID, mw, mh)
+	})
+
+	// 拖动/缩放手势会话（v3.1.0 实时挤开）：任一 Start 起 50ms 采样，任一 End
+	// 停（探针实测 Start 恒 StartMove、End 恒 EndResize，故四事件全订阅）；
+	// 权威记账与兜底弹开仍由去抖 WindowDidMove/WindowDidResize 承担。
+	win.OnWindowEvent(events.Windows.WindowStartMove, func(*application.WindowEvent) {
+		o.startDragSession(rec.ID)
+	})
+	win.OnWindowEvent(events.Windows.WindowEndMove, func(*application.WindowEvent) {
+		o.stopDragSession(rec.ID)
+	})
+	win.OnWindowEvent(events.Windows.WindowStartResize, func(*application.WindowEvent) {
+		o.startDragSession(rec.ID)
+	})
+	win.OnWindowEvent(events.Windows.WindowEndResize, func(*application.WindowEvent) {
+		o.stopDragSession(rec.ID)
 	})
 
 	// hidden=true（静默启动预建）：保持隐藏，召唤时经 ShowNote 显示；
@@ -589,7 +609,10 @@ func (o *wailsOps) FocusNote(id string) {
 	}
 }
 
-const glideStepMs = 16
+const (
+	glideStepMs = 16
+	dragTickMs  = 50
+)
 
 // GlideNote 弹开动画：步进 tween（easeOutCubic），全程抑制 WindowDidMove 记账；
 // 同窗口再次调用 close 旧取消信号取旧起新。锁只护 map 访问，SetPosition 在锁外
@@ -647,6 +670,60 @@ func (o *wailsOps) finishGlide(id string, done chan struct{}) {
 	if o.animDone[id] == done { // 仍是本动画持有标记才清理（被新动画接管则不动）
 		delete(o.animDone, id)
 		delete(o.suppressMove, id)
+	}
+	o.animMu.Unlock()
+}
+
+// startDragSession 拖动/缩放手势采样（v3.1.0 实时挤开）：每 50ms 读窗口实时
+// 几何交控制器 DragLiveTick。同窗口重复 Start 取旧起新；End 或窗口消失即退。
+// 读窗口几何在锁外、goroutine 内进行，不与控制器锁叠加。探针实测（261119）：
+// Frameless 手势的 Start 恒为 WindowStartMove（缩放也走它）、End 恒为
+// WindowEndResize（wails 以左键状态启发式判定），故四事件全订阅、任一生效。
+func (o *wailsOps) startDragSession(id string) {
+	o.animMu.Lock()
+	if done, ok := o.dragSessions[id]; ok {
+		close(done)
+	}
+	done := make(chan struct{})
+	o.dragSessions[id] = done
+	o.animMu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(dragTickMs * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				o.finishDragSession(id, done)
+				return
+			case <-ticker.C:
+				win := o.lookup(id)
+				if win == nil {
+					o.finishDragSession(id, done)
+					return
+				}
+				mx, my := win.Position()
+				mw, mh := win.Size()
+				o.ctl.DragLiveTick(id, mx, my, mw, mh)
+			}
+		}
+	}()
+}
+
+// stopDragSession 手势结束（EndMove/EndResize 任一）：停当前会话。
+func (o *wailsOps) stopDragSession(id string) {
+	o.animMu.Lock()
+	if done, ok := o.dragSessions[id]; ok {
+		delete(o.dragSessions, id)
+		close(done)
+	}
+	o.animMu.Unlock()
+}
+
+func (o *wailsOps) finishDragSession(id string, done chan struct{}) {
+	o.animMu.Lock()
+	if o.dragSessions[id] == done { // 仍是本会话持有标记才清理（被新会话接管则不动）
+		delete(o.dragSessions, id)
 	}
 	o.animMu.Unlock()
 }

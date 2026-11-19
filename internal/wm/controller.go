@@ -47,6 +47,9 @@ type NoteLive struct {
 	rec model.NoteRecord
 	px  int
 	py  int
+	// rw/rh 缩放手势中的实时尺寸（v3.1.0）；0 = 未置，回退 ClampW/H(rec.W/H)。
+	rw int
+	rh int
 }
 
 // Controller 权威便签列表持有者 + 唯一持久化入口（对应 bugzia main 窗口
@@ -391,6 +394,14 @@ func originLocked(n *NoteLive) (int, int, bool) {
 	return 0, 0, false
 }
 
+// liveSizeLocked 便签实时尺寸：缩放会话值优先，回退 Clamp 后的记录值。须持锁。
+func liveSizeLocked(n *NoteLive) (int, int) {
+	if n.rw > 0 && n.rh > 0 {
+		return n.rw, n.rh
+	}
+	return model.ClampW(n.rec.W), model.ClampH(n.rec.H)
+}
+
 // summonNote 召唤隐藏便签（三入口共用，v3.0.0 弹开式）：原位落地（Show + 记账），
 // 随后 pushPass 弹开与之重叠的可见便签。focus=true 时聚焦并记为当前便签。
 func (c *Controller) summonNote(id string, focus bool) {
@@ -412,17 +423,21 @@ func (c *Controller) summonNote(id string, focus bool) {
 		c.activeID = id // 召唤显示即成为当前便签
 		c.mu.Unlock()
 	}
-	c.pushPass(n)
+	if pushed := c.pushPass(n); pushed > 0 {
+		log.Printf("[summon] %s 落地原位，弹开 %d 张", n.rec.ID, pushed)
+	}
 }
 
 // pushPass 落地便签的弹开趟：收集其余可见便签实时几何 → ResolveOverlaps 解析
 //（级联/兜底）→ 状态先写（px/py；placed 同步 rec.X/Y、哨兵不动、不刷 UpdatedAt）
-// → GlideNote 动画视觉追赶（瀑布错峰）。整趟一次防抖落盘。
-func (c *Controller) pushPass(self *NoteLive) {
+// → GlideNote 动画视觉追赶（瀑布错峰）。整趟一次防抖落盘。返回实际弹开张数
+//（召唤路径用于记日志；拖拽/记账兜底路径不打日志，20Hz 采样会刷屏）。
+func (c *Controller) pushPass(self *NoteLive) int {
 	c.mu.Lock()
+	lw, lh := liveSizeLocked(self)
 	selfRect := Rect{
 		X: float32(self.px), Y: float32(self.py),
-		W: float32(model.ClampW(self.rec.W)), H: float32(model.ClampH(self.rec.H)),
+		W: float32(lw), H: float32(lh),
 	}
 	notes := make([]PushNote, 0, len(c.notes))
 	lives := map[string]*NoteLive{}
@@ -434,23 +449,24 @@ func (c *Controller) pushPass(self *NoteLive) {
 		if !ok {
 			continue
 		}
+		nw, nh := liveSizeLocked(n)
 		notes = append(notes, PushNote{
 			ID: n.rec.ID,
 			Rect: Rect{
 				X: float32(sx), Y: float32(sy),
-				W: float32(model.ClampW(n.rec.W)), H: float32(model.ClampH(n.rec.H)),
+				W: float32(nw), H: float32(nh),
 			},
 		})
 		lives[n.rec.ID] = n
 	}
 	c.mu.Unlock()
 	if len(notes) == 0 {
-		return
+		return 0
 	}
 	sw, sh := c.ops.PrimaryScreen()
 	pushes := ResolveOverlaps(selfRect, notes, sw, sh)
 	if len(pushes) == 0 {
-		return
+		return 0
 	}
 	for i, p := range pushes {
 		n := lives[p.ID]
@@ -463,7 +479,26 @@ func (c *Controller) pushPass(self *NoteLive) {
 		c.ops.GlideNote(p.ID, p.X, p.Y, i*GlideStaggerMs, GlideMs)
 	}
 	c.scheduleSave()
-	log.Printf("[summon] %s 落地原位，弹开 %d 张", self.rec.ID, len(pushes))
+	return len(pushes)
+}
+
+// DragLiveTick 拖动/缩放手势采样（v3.1.0 实时挤开）：只写实时几何（px/py 与
+// rw/rh），随后 pushPass 实时弹开被压便签。对被操作便签不写 rec、不刷
+// UpdatedAt、不落盘——权威记账仍归松手后的 NoteMoved/NoteResized；
+// pushPass 弹开被压者时照常记账落盘（弹开位置是持久事实，语义同 v3.0.0）。
+func (c *Controller) DragLiveTick(id string, x, y, w, h int) {
+	c.mu.Lock()
+	n := c.findLocked(id)
+	if n == nil {
+		c.mu.Unlock()
+		return
+	}
+	n.px, n.py = x, y
+	if w > 0 && h > 0 {
+		n.rw, n.rh = model.ClampW(w), model.ClampH(h)
+	}
+	c.mu.Unlock()
+	c.pushPass(n)
 }
 
 // ── 注水与前端事件入口 ──────────────────────────────────────────────────
@@ -556,6 +591,7 @@ func (c *Controller) NoteMoved(id string, x, y int) {
 	n.px, n.py = x, y
 	n.rec.UpdatedAt = time.Now().UnixMilli()
 	c.mu.Unlock()
+	c.pushPass(n) // 兜底弹开：松手残留重叠 / 拖动中停顿记账 / 键盘移动（无会话事件）
 	c.scheduleSave()
 }
 
@@ -568,8 +604,10 @@ func (c *Controller) NoteResized(id string, w, h int) {
 		return
 	}
 	n.rec.W, n.rec.H = model.ClampW(w), model.ClampH(h)
+	n.rw, n.rh = 0, 0 // 会话实时尺寸清零，后续几何计算回退 rec 值
 	n.rec.UpdatedAt = time.Now().UnixMilli()
 	c.mu.Unlock()
+	c.pushPass(n) // 兜底弹开：缩放变大压到兄弟
 	c.scheduleSave()
 }
 
