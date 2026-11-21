@@ -163,7 +163,7 @@ func (c *Controller) ToggleSlot(slot int) {
 	}
 }
 
-// createSlotNote 创建槽位便签（新建即钉住保证可见可写——bugzia 踩坑结论）。
+// createSlotNote 创建槽位便签（新建即置顶保证可见可写——bugzia 踩坑结论）。
 // hidden=true 仅静默启动预建主便签用（不聚焦，召唤路径再聚焦）。
 func (c *Controller) createSlotNote(slot int, hidden bool) {
 	if !c.canAdd() {
@@ -215,7 +215,7 @@ func (c *Controller) CreateOrSummonFree() {
 }
 
 // createFreeNote 新建自由便签：未锁定时跟随全局默认样式（独立样式设置的
-// 基线），即钉住、装箱定位、聚焦成为当前便签。
+// 基线），即置顶、装箱定位、聚焦成为当前便签。
 func (c *Controller) createFreeNote() {
 	if !c.canAdd() {
 		c.Notify("bugzia-notes", fmt.Sprintf("便笺已达上限（%d）", model.MaxNotes))
@@ -233,9 +233,9 @@ func (c *Controller) createFreeNote() {
 }
 
 // ToggleMainSet 「便签集合切换」键（toggle）入口（v2.2.0）：集合 = 主便签 +
-// 全部自由便签，辅助便签不参与。展开 = 集合内每张钉住且可见（主便签缺失即
-// 未展开）；未展开 → 补建缺失的主便签、召唤全部隐藏成员、未钉成员升钉保证
-// 可见（防空转，升钉不刷 UpdatedAt）、聚焦集合内最近活跃一张；已展开 →
+// 全部自由便签，辅助便签不参与。展开 = 集合内每张置顶且可见（主便签缺失即
+// 未展开）；未展开 → 补建缺失的主便签、召唤全部隐藏成员、未置顶成员升置顶保证
+// 可见（防空转，升置顶不刷 UpdatedAt）、聚焦集合内最近活跃一张；已展开 →
 // 集合全部收起。
 func (c *Controller) ToggleMainSet() {
 	c.mu.Lock()
@@ -297,7 +297,7 @@ func (c *Controller) ToggleMainSet() {
 	sort.Slice(summoned, func(i, j int) bool { return summoned[i].rec.UpdatedAt < summoned[j].rec.UpdatedAt })
 
 	if main == nil {
-		c.createSlotNote(model.SlotMain, false) // 补建：即钉住、装箱、needsFocus
+		c.createSlotNote(model.SlotMain, false) // 补建：即置顶、装箱、needsFocus
 	}
 	for _, n := range summoned {
 		c.summonNote(n.rec.ID, false)
@@ -306,7 +306,7 @@ func (c *Controller) ToggleMainSet() {
 		c.ops.SetPinned(id, true)
 	}
 	if len(promoted) > 0 || main == nil {
-		c.scheduleSave() // 升钉 / 补建一并固化（防抖，非同步写盘）
+		c.scheduleSave() // 升置顶 / 补建一并固化（防抖，非同步写盘）
 	}
 	if focusID != "" {
 		c.ops.FocusNote(focusID)

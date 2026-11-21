@@ -28,10 +28,10 @@ const lockLabel = document.getElementById("lock-label");
 const btnStyleClose = document.getElementById("btn-styleclose");
 const spMsg = document.getElementById("sp-msg");
 const spFields = {
-  bgR: document.getElementById("bg-r"), bgG: document.getElementById("bg-g"),
-  bgB: document.getElementById("bg-b"), bgA: document.getElementById("bg-a"),
+  bgA: document.getElementById("bg-a"),
   radius: document.getElementById("radius"), font: document.getElementById("font"),
 };
+const spBgColor = document.getElementById("bg-color");
 
 let content = ""; // 最近提交内容
 let pinned = false;
@@ -383,17 +383,27 @@ function syncLockUI() {
   lockLabel.textContent = locked ? "已锁定（独立样式）" : followText;
   btnStyleLock.title = locked ? "解锁：恢复跟随" : "锁定：样式独立，可单独修改";
   for (const el of Object.values(spFields)) el.disabled = !locked;
+  spBgColor.disabled = !locked;
   spMsg.textContent = locked ? ""
     : slot >= 1 ? "当前跟随槽位色，锁定后可单独修改"
     : "当前跟随全局默认，锁定后可单独修改";
   fillForm(curStyle);
 }
 
+function rgbToHex(c) {
+  const h = (v) => v.toString(16).padStart(2, "0");
+  return "#" + h(c.r) + h(c.g) + h(c.b);
+}
+function hexToRgb(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
 function fillForm(s) {
   if (!s) return;
-  spFields.bgR.value = s.bg_r ?? 201;
-  spFields.bgG.value = s.bg_g ?? 88;
-  spFields.bgB.value = s.bg_b ?? 119;
+  spBgColor.value = rgbToHex({ r: s.bg_r ?? 201, g: s.bg_g ?? 88, b: s.bg_b ?? 119 });
   spFields.bgA.value = s.bg_alpha ?? 0.9;
   spFields.radius.value = s.radius ?? 10;
   spFields.font.value = s.font_size ?? 14;
@@ -401,6 +411,8 @@ function fillForm(s) {
 
 async function applySpStyle() {
   if (!locked || applying) return;
+  const rgb = hexToRgb(spBgColor.value);
+  if (rgb === null) return;
   const v = {};
   for (const [k, el] of Object.entries(spFields)) {
     const n = parseFloat(el.value);
@@ -410,7 +422,7 @@ async function applySpStyle() {
   applying = true;
   try {
     await wails.Call.ByName(NS + "ApplyNoteStyleFor", id, {
-      bg_r: v.bgR, bg_g: v.bgG, bg_b: v.bgB, bg_alpha: v.bgA,
+      bg_r: rgb.r, bg_g: rgb.g, bg_b: rgb.b, bg_alpha: v.bgA,
       radius: v.radius, font_size: v.font,
     });
     spMsg.textContent = ""; // 成功提示随 hydrate 重推自然反映
@@ -436,9 +448,7 @@ for (const p of spPresets) {
   b.title = p.name;
   b.style.background = `rgb(${p.rgb.join(",")})`;
   b.addEventListener("click", () => {
-    spFields.bgR.value = p.rgb[0];
-    spFields.bgG.value = p.rgb[1];
-    spFields.bgB.value = p.rgb[2];
+    spBgColor.value = rgbToHex({ r: p.rgb[0], g: p.rgb[1], b: p.rgb[2] });
     applySpStyle();
   });
   spSwatches.appendChild(b);
@@ -453,6 +463,15 @@ btnStyleClose.addEventListener("click", () => closePanel());
 for (const el of Object.values(spFields)) {
   el.addEventListener("change", applySpStyle);
 }
+
+/* 背景色调色盘：拖动取色实时生效；applying 互斥可能丢最后一次 input，
+   尾随 200ms 补应用保证最终值落盘（与设置窗口同款） */
+let spBgTimer = null;
+spBgColor.addEventListener("input", () => {
+  applySpStyle();
+  clearTimeout(spBgTimer);
+  spBgTimer = setTimeout(applySpStyle, 200);
+});
 
 btnStyleLock.addEventListener("click", async () => {
   try {

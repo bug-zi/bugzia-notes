@@ -213,7 +213,7 @@ func TestNoteGeometryUpdatesRecord(t *testing.T) {
 
 func TestScheduleSavePersistsAllNotes(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.ToggleSlot(0) // 新建即钉住
+	ctl.ToggleSlot(0) // 新建即置顶
 	ctl.ToggleSlot(1)
 	ids := ctl.noteIDs()
 	ctl.setPinnedForTest(ids[1], false) // 第二张改为未钉
@@ -303,8 +303,8 @@ func TestPackAvoidsNotePlacedAtNegativeCoords(t *testing.T) {
 	}
 }
 
-// seedPinnedNotes 造库：n 张钉住便签落盘，返回可恢复的目录。
-// （当前为全量持久化；种子用钉住便签即可覆盖启动恢复路径。）
+// seedPinnedNotes 造库：n 张置顶便签落盘，返回可恢复的目录。
+// （当前为全量持久化；种子用置顶便签即可覆盖启动恢复路径。）
 func seedPinnedNotes(t *testing.T, n int) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -345,7 +345,7 @@ func TestStartHiddenThenSummonShowsMain(t *testing.T) {
 		t.Fatalf("召唤后应显示: visible=%v hidden=%v", ctl.visible[id], ops.hidden[id])
 	}
 	if !ctl.AllRecords()[0].Pinned {
-		t.Fatal("召唤应保持钉住")
+		t.Fatal("召唤应保持置顶")
 	}
 }
 
@@ -552,7 +552,7 @@ func TestToggleSlotCreatesPinnedAndActivates(t *testing.T) {
 	}
 	rec, ok := ctl.recForTest(ids[0])
 	if !ok || rec.Slot != 2 || !rec.Pinned {
-		t.Fatalf("新槽位便签应即钉住且 Slot=2: %+v", rec)
+		t.Fatalf("新槽位便签应即置顶且 Slot=2: %+v", rec)
 	}
 	if ctl.activeIDForTest() != ids[0] {
 		t.Fatal("新建应成为当前便签")
@@ -723,7 +723,7 @@ func TestCreateOrSummonFreeCreatesWhenNone(t *testing.T) {
 	}
 	rec, _ := ctl.recForTest(ids[0])
 	if rec.Slot != model.SlotFree || !rec.Pinned {
-		t.Fatalf("自由便签应 SlotFree 且即钉住: %+v", rec)
+		t.Fatalf("自由便签应 SlotFree 且即置顶: %+v", rec)
 	}
 	if rec.Title == "" {
 		t.Fatal("自由便签应有默认标题")
@@ -861,7 +861,7 @@ func TestSetTitleTrimsClampsAndGuards(t *testing.T) {
 
 func TestToggleMainSetSummonsAndPromotes(t *testing.T) {
 	ctl, ops := newTestController(t)
-	ctl.ToggleSlot(model.SlotMain) // 主便签（创建即钉住显示）
+	ctl.ToggleSlot(model.SlotMain) // 主便签（创建即置顶显示）
 	ctl.CreateOrSummonFree()       // 自由 A
 	ctl.CreateOrSummonFree()       // 自由 B
 	ids := ctl.noteIDs()
@@ -908,7 +908,7 @@ func TestToggleMainSetHidesAllLeavesAux(t *testing.T) {
 	ids := ctl.noteIDs()
 	main, free, aux := ids[0], ids[1], ids[2]
 
-	ctl.ToggleMainSet() // 集合全钉住且可见 → 收起
+	ctl.ToggleMainSet() // 集合全置顶且可见 → 收起
 	if ctl.visible[main] || ctl.visible[free] {
 		t.Fatal("集合应全部收起")
 	}
@@ -948,7 +948,7 @@ func TestToggleMainSetCreatesMainWhenMissing(t *testing.T) {
 	}
 	for _, r := range ctl.AllRecords() {
 		if r.ID == main && !r.Pinned {
-			t.Fatal("补建的主便签应钉住")
+			t.Fatal("补建的主便签应置顶")
 		}
 	}
 	if !ctl.visible[ids[0]] || !ctl.visible[ids[1]] {
@@ -971,7 +971,7 @@ func TestToggleMainSetEmptyCollectionCreatesMain(t *testing.T) {
 	}
 	rec := ctl.AllRecords()[0]
 	if rec.Slot != model.SlotMain || !rec.Pinned {
-		t.Fatal("补建记录应为钉住的主便签")
+		t.Fatal("补建记录应为置顶的主便签")
 	}
 }
 
@@ -1374,7 +1374,7 @@ func TestNoteResizedFallbackPush(t *testing.T) {
 	}
 }
 
-// 未钉便签拖压钉住便签：钉住的同样被挤开（参与不分钉住）。
+// 未置顶便签拖压置顶便签：置顶的同样被挤开（置顶不参与挤压保护——保护是钉住 Fixed 的职责，见 v3.3.0 用例）。
 func TestDragLiveTickPushesPinnedToo(t *testing.T) {
 	a := model.NewRecord("", 240, 220, true)
 	a.Slot = 1
@@ -1388,7 +1388,7 @@ func TestDragLiveTickPushesPinnedToo(t *testing.T) {
 
 	ctl.DragLiveTick(idA, 450, 450, 240, 220)
 	if len(ops.glides) != 1 || ops.glides[0].id != idB {
-		t.Fatalf("钉住的也应被挤开: %+v", ops.glides)
+		t.Fatalf("置顶的也应被挤开: %+v", ops.glides)
 	}
 }
 

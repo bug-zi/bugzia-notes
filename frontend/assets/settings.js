@@ -8,9 +8,9 @@ const NS = "bugzia-notes/internal/settingsui.Service.";
 
 const $ = (id) => document.getElementById(id);
 const fields = {
-  bgR: $("bg-r"), bgG: $("bg-g"), bgB: $("bg-b"), bgA: $("bg-a"),
-  radius: $("radius"), font: $("font"), w: $("w"), h: $("h"),
+  bgA: $("bg-a"), radius: $("radius"), font: $("font"), w: $("w"), h: $("h"),
 };
+const bgColor = $("bg-color");
 const hk = {
   toggle: $("hk-toggle"), main: $("hk-main"), destroy: $("hk-destroy"),
   aux1: $("hk-aux1"), aux2: $("hk-aux2"), aux3: $("hk-aux3"),
@@ -28,9 +28,10 @@ function num(el) {
 function readStyle() {
   const vals = {};
   for (const [k, el] of Object.entries(fields)) vals[k] = num(el);
-  if (Object.values(vals).some((v) => v === null)) return null;
+  const rgb = hexToRgb(bgColor.value);
+  if (rgb === null || Object.values(vals).some((v) => v === null)) return null;
   return {
-    bg_r: vals.bgR, bg_g: vals.bgG, bg_b: vals.bgB, bg_alpha: vals.bgA,
+    bg_r: rgb.r, bg_g: rgb.g, bg_b: rgb.b, bg_alpha: vals.bgA,
     radius: vals.radius, font_size: vals.font, w: vals.w, h: vals.h,
   };
 }
@@ -55,6 +56,16 @@ for (const el of Object.values(fields)) {
   el.addEventListener("change", applyStyle);
 }
 
+/* 背景色调色盘：拖动取色实时生效；applying 互斥可能丢最后一次 input，
+   尾随 200ms 补应用保证最终值落盘 */
+let bgApplyTimer = null;
+function applyBgSoon() {
+  applyStyle();
+  clearTimeout(bgApplyTimer);
+  bgApplyTimer = setTimeout(applyStyle, 200);
+}
+bgColor.addEventListener("input", applyBgSoon);
+
 /* 玫红同源色系预设 */
 const presets = [
   { name: "玫红", rgb: [201, 88, 119] },
@@ -71,9 +82,8 @@ for (const p of presets) {
   b.title = p.name;
   b.style.background = `rgb(${p.rgb.join(",")})`;
   b.addEventListener("click", () => {
-    fields.bgR.value = p.rgb[0];
-    fields.bgG.value = p.rgb[1];
-    fields.bgB.value = p.rgb[2];
+    clearTimeout(bgApplyTimer);
+    bgColor.value = rgbToHex({ r: p.rgb[0], g: p.rgb[1], b: p.rgb[2] });
     applyStyle();
   });
   swatches.appendChild(b);
@@ -216,9 +226,7 @@ async function init() {
   try {
     const s = await wails.Call.ByName(NS + "GetSettings");
     const n = s.note ?? {};
-    fields.bgR.value = n.bg_r ?? 201;
-    fields.bgG.value = n.bg_g ?? 88;
-    fields.bgB.value = n.bg_b ?? 119;
+    bgColor.value = rgbToHex({ r: n.bg_r ?? 201, g: n.bg_g ?? 88, b: n.bg_b ?? 119 });
     fields.bgA.value = n.bg_alpha ?? 0.9;
     fields.radius.value = n.radius ?? 10;
     fields.font.value = n.font_size ?? 14;

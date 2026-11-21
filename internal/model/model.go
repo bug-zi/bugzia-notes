@@ -30,7 +30,7 @@ const (
 	RecycleMaxEntries = 100
 )
 
-// NoteRecord 单张钉住便签。几何为逻辑像素，语义与 bugzia NoteRecord 一致；
+// NoteRecord 单张便签。几何为逻辑像素，语义与 bugzia NoteRecord 一致；
 // created_at / updated_at / style 是本应用新增的扩展字段（升级不破老数据）。
 type NoteRecord struct {
 	ID        string     `json:"id"`

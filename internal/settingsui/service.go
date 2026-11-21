@@ -16,7 +16,7 @@ import (
 )
 
 // Version 应用版本（设置窗口展示）。
-const Version = "v3.3.0"
+const Version = "v3.3.1"
 
 // Service 暴露给前端的服务（Wails 绑定）。
 type Service struct {

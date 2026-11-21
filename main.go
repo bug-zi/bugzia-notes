@@ -400,7 +400,7 @@ func updateFlow(upd *updater.Config, app *application.App, manual bool) map[stri
 func promptUpdate(app *application.App, upd *updater.Config, rel *updater.Release) {
 	dlg := app.Dialog.Question()
 	dlg.SetTitle("发现新版本 " + rel.Tag)
-	dlg.Message = fmt.Sprintf("最新版 %s，当前 %s。\n\n更新将重启应用，未钉住的临时便签会消失。",
+	dlg.Message = fmt.Sprintf("最新版 %s，当前 %s。\n\n更新将重启应用，未置顶的临时便签会消失。",
 		rel.Tag, upd.Current)
 	yes := dlg.AddButton("更新")
 	yes.SetAsDefault()
@@ -496,7 +496,7 @@ func (o *wailsOps) CreateNoteWindow(rec model.NoteRecord, x, y, w, h int, hidden
 	})
 	o.applyLayer(rec.ID, rec.Pinned)
 	// Wails 建窗异步：CreateNoteWindow 可能在 app.Run() 主循环启动前被调用
-	//（ctl.Start 恢复钉住便签），冷启动慢时主循环 5 秒起不来会扑空，放宽到
+	//（ctl.Start 恢复便签），冷启动慢时主循环 5 秒起不来会扑空，放宽到
 	// 15 秒；HideFromTaskbar 依赖这里的句柄
 	if hwnd, err := winutil.HWNDByTitleWait(rec.ID, 15*time.Second); err == nil {
 		winutil.HideFromTaskbar(hwnd)

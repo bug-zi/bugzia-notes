@@ -72,7 +72,7 @@ func HWNDByTitleWait(title string, timeout time.Duration) (uintptr, error) {
 	}
 }
 
-// SetBottom 沉底：窗口贴桌面层，被应用窗口盖住（未钉住便签的层级）。
+// SetBottom 沉底：窗口贴桌面层，被应用窗口盖住（未置顶便签的层级）。
 func SetBottom(hwnd uintptr) {
 	procSetWindowPos.Call(hwnd, hwndBottom, 0, 0, 0, 0,
 		swpNoSize|swpNoMove|swpNoActivate|swpShowWindow)
