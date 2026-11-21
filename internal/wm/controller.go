@@ -1,10 +1,13 @@
 package wm
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +42,8 @@ type WindowOps interface {
 	// 抑制 WindowDidMove 记账（用户拖动语义），同窗口再次调用取旧起新。
 	GlideNote(id string, x, y, delayMs, ms int)
 	Notify(title, body string)
+	// EmitDoneChanged 留痕数据变更广播（v4.0.0）：记事簿窗口订阅重拉。
+	EmitDoneChanged()
 	// PrimaryScreen 主屏逻辑尺寸（装箱用）。
 	PrimaryScreen() (w, h float32)
 }
@@ -173,7 +178,11 @@ func (c *Controller) createSlotNote(slot int, hidden bool) {
 	s := c.store.Settings().Note
 	rec := model.NewRecord("", s.W, s.H, true)
 	rec.Slot = slot
-	rec.Title = c.nextDefaultTitle()
+	if slot == model.SlotMain {
+		rec.Title = model.MainNoteTitle // 主便签固定名（v4.0.0）
+	} else {
+		rec.Title = c.nextDefaultTitle()
+	}
 	live := c.openRecord(rec, true, hidden)
 	c.mu.Lock()
 	c.activeID = live.rec.ID
@@ -391,7 +400,7 @@ func (c *Controller) packPos(self *NoteLive, w, h float32) (int, int) {
 // ── 召唤（v2.3.0 智能避重叠）────────────────────────────────────────────
 
 // originLocked 召唤/避让用便签当前位置：实时 px/py 优先，未摆放回退记录值
-//（与 packPos 同规则，负坐标合法）；两者皆哨兵 = 无从判定返回 false。须持锁。
+// （与 packPos 同规则，负坐标合法）；两者皆哨兵 = 无从判定返回 false。须持锁。
 func originLocked(n *NoteLive) (int, int, bool) {
 	if n.px != model.SentinelCoord {
 		return n.px, n.py, true
@@ -437,13 +446,13 @@ func (c *Controller) summonNote(id string, focus bool) {
 }
 
 // pushPass 落地便签的弹开趟：收集其余可见便签实时几何 → ResolveOverlaps 解析
-//（级联/兜底）→ 状态先写（px/py；placed 同步 rec.X/Y、哨兵不动、不刷 UpdatedAt）
+// （级联/兜底）→ 状态先写（px/py；placed 同步 rec.X/Y、哨兵不动、不刷 UpdatedAt）
 // → GlideNote 动画视觉追赶（瀑布错峰）。整趟一次防抖落盘。返回实际弹开张数
-//（召唤路径用于记日志；拖拽/记账兜底路径不打日志，20Hz 采样会刷屏）。
+// （召唤路径用于记日志；拖拽/记账兜底路径不打日志，20Hz 采样会刷屏）。
 // trackPacked=true 时受满屏熔断约束（v3.2.0）：dragPacked 已置位则直接返回 0；
 // 本趟出现「接受重叠」（桌面塞不下的见证）则置位 dragPacked，此后本手势静止。
 // false = 无熔断语义（召唤路径，不读不写标记）。钉住便签作为候选带 Fixed 标志
-//（静态障碍）；self 不进候选——主动方（含钉住便签被拖动）无特殊化（v3.3.0）。
+// （静态障碍）；self 不进候选——主动方（含钉住便签被拖动）无特殊化（v3.3.0）。
 func (c *Controller) pushPass(self *NoteLive, trackPacked bool) int {
 	if trackPacked {
 		c.mu.Lock()
@@ -785,7 +794,8 @@ func (c *Controller) hideNote(id string) {
 // ── 销毁 ────────────────────────────────────────────────────────────────
 
 // DestroyCurrent 销毁「当前便签」= 最近新建/编辑的那张，回退列表最后一张；
-// 无可销毁时通知提示（bugzia 同款）。
+// 无可销毁时通知提示（bugzia 同款）。目标为主便签时拦截（v4.0.0：待办便签
+// 不可销毁，spec §3.4），弹提示不进确认态。
 func (c *Controller) DestroyCurrent() {
 	c.mu.Lock()
 	if len(c.notes) == 0 {
@@ -796,6 +806,13 @@ func (c *Controller) DestroyCurrent() {
 	target := c.activeID
 	if target == "" || c.findLocked(target) == nil {
 		target = c.notes[len(c.notes)-1].rec.ID
+	}
+	for _, n := range c.notes {
+		if n.rec.ID == target && n.rec.Slot == model.SlotMain {
+			c.mu.Unlock()
+			c.Notify("bugzia-notes", "待办事项（主便签）不可销毁")
+			return
+		}
 	}
 	c.mu.Unlock()
 	c.RequestDestroy(target)
@@ -832,6 +849,12 @@ func (c *Controller) ConfirmDestroy(id string) {
 		return
 	}
 	rec := n.rec
+	if rec.Slot == model.SlotMain {
+		// 主便签不可销毁（v4.0.0 兜底守卫）：清确认态直接返回
+		delete(c.confirming, id)
+		c.mu.Unlock()
+		return
+	}
 	delete(c.confirming, id)
 	c.notes = removeNote(c.notes, id)
 	delete(c.visible, id)
@@ -851,6 +874,170 @@ func (c *Controller) ConfirmDestroy(id string) {
 			DeletedAt: time.Now().UnixMilli(),
 		})
 	}
+}
+
+// ── 待办留痕（v4.0.0）───────────────────────────────────────────────────
+
+// newDoneID 留痕条目随机 id（还原按 id 定位，避免位置序号竞态）。
+func newDoneID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(b)
+}
+
+// TodoCats 分类配置快照（hydrate 载荷附带给主便签前端渲染分区）。
+func (c *Controller) TodoCats() []string {
+	return c.store.Settings().TodoCategories
+}
+
+// CheckTodo 打勾完成待办：从主便签对应分区移除该条 → 先落留痕（done.json
+// 立即写盘——宁重复不丢失，spec §5.2）→ 再改 content 并单窗重推、广播
+// done:changed。打勾视为编辑（刷 UpdatedAt）。守卫：非主便签 / 分类未配置 /
+// 条目不存在 / 空文本一律不动不留痕。
+func (c *Controller) CheckTodo(id, category, text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	c.mu.Lock()
+	n := c.findLocked(id)
+	if n == nil || n.rec.Slot != model.SlotMain {
+		c.mu.Unlock()
+		return
+	}
+	cats := c.store.Settings().TodoCategories
+	content := n.rec.Content
+	c.mu.Unlock()
+	if !containsStr(cats, category) {
+		return
+	}
+	secs := ParseTodoContent(content, cats)
+	if !RemoveTodoItem(secs, category, text) {
+		return // 条目不存在（重复事件等）：不记痕不改内容
+	}
+	now := time.Now().UnixMilli()
+	c.store.AddDoneEntry(model.DoneEntry{
+		ID:       newDoneID(),
+		Text:     text,
+		Category: category,
+		DoneAt:   now,
+	})
+	c.mu.Lock()
+	n.rec.Content = RenderTodoContent(secs, cats)
+	n.rec.UpdatedAt = now
+	c.mu.Unlock()
+	c.scheduleSave()
+	c.HydrateTo(id)
+	c.ops.EmitDoneChanged()
+}
+
+func containsStr(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// RestoreDone 还原留痕条目（记事簿窗口入口）：从 done.json 移除并插回主便签
+// ——原分类仍在配置中插回该分区末尾，否则插回「未分类」末尾；content 重排 +
+// 单窗重推 + 广播 done:changed；主便签隐藏时自动召唤（复用 summonNote，
+// spec §5.4）。主便签缺失（异常）：条目放回留痕不丢数据。
+func (c *Controller) RestoreDone(entryID string) {
+	e, ok := c.store.RemoveDoneEntry(entryID)
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	var main *NoteLive
+	for _, n := range c.notes {
+		if n.rec.Slot == model.SlotMain {
+			main = n
+			break
+		}
+	}
+	if main == nil {
+		c.mu.Unlock()
+		c.store.AddDoneEntry(e)
+		return
+	}
+	cats := c.store.Settings().TodoCategories
+	secs := ParseTodoContent(main.rec.Content, cats)
+	target := e.Category
+	if !containsStr(cats, target) {
+		target = model.TodoUnsorted
+	}
+	AppendTodoItem(secs, target, e.Text)
+	main.rec.Content = RenderTodoContent(secs, cats)
+	main.rec.UpdatedAt = time.Now().UnixMilli()
+	id := main.rec.ID
+	c.mu.Unlock()
+
+	c.scheduleSave()
+	c.HydrateTo(id)
+	c.ops.EmitDoneChanged()
+	c.mu.Lock()
+	hidden := !c.visible[id]
+	c.mu.Unlock()
+	if hidden {
+		c.summonNote(id, true)
+	}
+}
+
+// ApplyTodoCategories 应用分类配置（主便签设置面板入口）：规范化校验 → 主便签
+// 分区按新配置重排（rewrites 为旧名→目标名映射：改名/合并/删除；新增与排序传
+// nil——重排时旧分区按原汇入，未在 rewrites 且已消失的分类其待办归未分类）→
+// 留痕记录分类名同步改写（done.json 立即写盘）→ 设置落盘 + 防抖保存 notes +
+// 主便签单窗重推 + 广播 done:changed。UI 契约：单次操作只传一层映射（值即
+// 最终目标名，不做链式解析）。空分区标题行随重排渲染显式存在（spec §3.1）。
+func (c *Controller) ApplyTodoCategories(cats []string, rewrites map[string]string) error {
+	cats = model.NormalizeTodoCategories(cats)
+	c.mu.Lock()
+	var main *NoteLive
+	for _, n := range c.notes {
+		if n.rec.Slot == model.SlotMain {
+			main = n
+			break
+		}
+	}
+	if main == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("主便签不存在")
+	}
+	oldCats := c.store.Settings().TodoCategories
+	secs := ParseTodoContent(main.rec.Content, oldCats)
+	merged := map[string][]string{}
+	for _, s := range secs {
+		t := s.Category
+		if v, ok := rewrites[t]; ok {
+			t = v
+		}
+		if !containsStr(cats, t) {
+			t = model.TodoUnsorted
+		}
+		merged[t] = append(merged[t], s.Items...)
+	}
+	out := make([]TodoSection, 0, len(cats))
+	for _, cat := range cats {
+		out = append(out, TodoSection{Category: cat, Items: merged[cat]})
+	}
+	main.rec.Content = RenderTodoContent(out, cats)
+	main.rec.UpdatedAt = time.Now().UnixMilli()
+	id := main.rec.ID
+	c.mu.Unlock()
+
+	cur := c.store.Settings()
+	cur.TodoCategories = cats
+	if err := c.store.SaveSettingsNow(cur); err != nil {
+		return err
+	}
+	c.store.RewriteDoneCategories(rewrites)
+	c.scheduleSave()
+	c.HydrateTo(id)
+	c.ops.EmitDoneChanged()
+	return nil
 }
 
 func removeNote(ns []*NoteLive, id string) []*NoteLive {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"bugzia-notes/internal/model"
 	"bugzia-notes/internal/store"
@@ -33,6 +34,7 @@ type fakeOps struct {
 	fixes          map[string]bool
 	confirms       []string
 	glides         []glideCall
+	doneChanged    int
 }
 
 func newFakeOps() *fakeOps {
@@ -73,6 +75,8 @@ func (f *fakeOps) GlideNote(id string, x, y, delayMs, ms int) {
 }
 
 func (f *fakeOps) Notify(title, body string) { f.notify = append(f.notify, body) }
+
+func (f *fakeOps) EmitDoneChanged() { f.doneChanged++ }
 
 func (f *fakeOps) PrimaryScreen() (float32, float32) { return 1920, 1080 }
 
@@ -146,8 +150,7 @@ func updatedAtForTest(c *Controller, id string) int64 {
 
 func TestDestroyCurrentFallsBackToActiveThenLast(t *testing.T) {
 	ctl, ops := newTestController(t)
-	ctl.ToggleSlot(0)
-	ctl.ToggleSlot(1)
+	ctl.ToggleSlot(1) // v4.0.0 起主便签不可销毁：销毁链语义用辅助便签验证
 	ctl.ToggleSlot(2)
 	first := ctl.noteIDs()[0]
 	ctl.SetContent(first, "编辑过") // 编辑过 = 当前便签（bugzia 语义）
@@ -156,7 +159,7 @@ func TestDestroyCurrentFallsBackToActiveThenLast(t *testing.T) {
 		t.Fatalf("应向目标窗口发确认请求: %v", ops.confirms)
 	}
 	ctl.ConfirmDestroy(first) // 前端确认（Y）后真正销毁
-	if ctl.Count() != 2 || ctl.hasNote(first) {
+	if ctl.Count() != 1 || ctl.hasNote(first) {
 		t.Fatalf("应销毁当前便签（第一张）: %v", ctl.noteIDs())
 	}
 	// 当前便签已被销毁 → 回退列表最后一张
@@ -481,7 +484,7 @@ func TestApplySettingsExemptsLockedNote(t *testing.T) {
 
 func TestDestroyNonEmptySavesToRecycle(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.ToggleSlot(0)
+	ctl.ToggleSlot(1) // v4.0.0 起主便签不可销毁：回收站链路用辅助便签验证
 	id := ctl.noteIDs()[0]
 	ctl.SetContent(id, "要找回的内容")
 	before := ctl.AllRecords()[0]
@@ -809,15 +812,15 @@ func TestMaxNotesCapTwenty(t *testing.T) {
 
 func TestDefaultTitleNumberingSkipsTaken(t *testing.T) {
 	ctl, _ := newTestController(t)
-	ctl.ToggleSlot(0)        // 便签1
+	ctl.ToggleSlot(0)        // 待办事项（主便签固定名，v4.0.0）
 	ctl.ToggleSlot(1)        // 便签2
 	ctl.CreateOrSummonFree() // 便签3
 	ids := ctl.noteIDs()
 	r0, _ := ctl.recForTest(ids[0])
 	r1, _ := ctl.recForTest(ids[1])
 	r2, _ := ctl.recForTest(ids[2])
-	if r0.Title != "便签1" || r1.Title != "便签2" || r2.Title != "便签3" {
-		t.Fatalf("默认标题应按创建顺序编号: %q %q %q", r0.Title, r1.Title, r2.Title)
+	if r0.Title != model.MainNoteTitle || r1.Title != "便签2" || r2.Title != "便签3" {
+		t.Fatalf("默认标题应按创建顺序编号（主便签固定名）: %q %q %q", r0.Title, r1.Title, r2.Title)
 	}
 	ctl.SetTitle(ids[1], "购物清单")
 	ctl.CreateOrSummonFree() // 现有 便签1/购物清单/便签3 → start=4 → 便签4
@@ -1222,8 +1225,8 @@ func TestDragLiveTickNoOverlapNoop(t *testing.T) {
 }
 
 // 控制器路径级联：a(8,8,300,200) 压 b(150,100,160,120) → b 下弹 (150,216)
-//（dy116 < dx166）；b 新矩形 y 216-336 压 c(158,308,160,120) → c 下弹 (158,344)
-//（dy36 < dx160）。尺寸取 ≥ 最小尺寸（160x120），ClampW/H 不改值。
+// （dy116 < dx166）；b 新矩形 y 216-336 压 c(158,308,160,120) → c 下弹 (158,344)
+// （dy36 < dx160）。尺寸取 ≥ 最小尺寸（160x120），ClampW/H 不改值。
 func TestDragLiveTickCascade(t *testing.T) {
 	a := model.NewRecord("", 300, 200, true)
 	a.Slot = 1
@@ -1580,5 +1583,314 @@ func TestSummonAcceptsOverlapWithFixed(t *testing.T) {
 	}
 	if x, y := ctl.livePosForTest(idF); x != 100 || y != 100 {
 		t.Fatalf("钉住 f 应保持原位: %d,%d", x, y)
+	}
+}
+
+// newTodoMain 造主便签待办场景：建主便签（默认五分类配置）并写入分区内容。
+func newTodoMain(t *testing.T, content string) (*Controller, *fakeOps, string) {
+	t.Helper()
+	ctl, ops := newTestController(t)
+	ctl.ToggleSlot(0)
+	id := ctl.noteIDs()[0]
+	ctl.SetContent(id, content)
+	return ctl, ops, id
+}
+
+// CheckTodo：分区内删行 + done.json 头插留痕 + 单窗重推 + done:changed 广播；
+// 打勾视为编辑（刷 UpdatedAt）。
+func TestCheckTodoRemovesAndRecords(t *testing.T) {
+	ctl, ops, id := newTodoMain(t, "【日常】\n买牛奶\n拿快递\n【作业】\n大物作业")
+	before := updatedAtForTest(ctl, id)
+	time.Sleep(2 * time.Millisecond) // 保证 UpdatedAt 时间戳可分辨（毫秒精度）
+
+	ctl.CheckTodo(id, "日常", "买牛奶")
+
+	rec, _ := ctl.recForTest(id)
+	want := "【日常】\n拿快递\n【理论学习】\n【作业】\n大物作业\n【项目开发】\n【未分类】"
+	if rec.Content != want {
+		t.Fatalf("content 应重排为:\ngot  %q\nwant %q", rec.Content, want)
+	}
+	if rec.UpdatedAt <= before {
+		t.Fatal("打勾视为编辑，应刷 UpdatedAt")
+	}
+	entries := ctl.store.DoneEntries()
+	if len(entries) != 1 {
+		t.Fatalf("应留痕 1 条: %+v", entries)
+	}
+	e := entries[0]
+	if e.Text != "买牛奶" || e.Category != "日常" || e.DoneAt <= 0 || e.ID == "" {
+		t.Fatalf("留痕字段不全: %+v", e)
+	}
+	if ops.doneChanged != 1 {
+		t.Fatalf("应广播 done:changed: %d", ops.doneChanged)
+	}
+	found := false
+	for _, h := range ops.hydrates {
+		if h == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("应单窗重推主便签")
+	}
+}
+
+// 同分区同名多条只移除第一条。
+func TestCheckTodoRemovesFirstDuplicate(t *testing.T) {
+	ctl, _, id := newTodoMain(t, "【日常】\n买牛奶\n买牛奶")
+	ctl.CheckTodo(id, "日常", "买牛奶")
+	rec, _ := ctl.recForTest(id)
+	if rec.Content != "【日常】\n买牛奶\n【理论学习】\n【作业】\n【项目开发】\n【未分类】" {
+		t.Fatalf("应只删首个: %q", rec.Content)
+	}
+	if len(ctl.store.DoneEntries()) != 1 {
+		t.Fatal("只应留痕一条")
+	}
+}
+
+// 分类不在配置 / 条目不存在 / 空文本 / 非主便签：一律不动、不留痕。
+func TestCheckTodoGuards(t *testing.T) {
+	ctl, ops, id := newTodoMain(t, "【日常】\n买牛奶")
+	before := updatedAtForTest(ctl, id)
+
+	ctl.CheckTodo(id, "不存在的分类", "买牛奶")
+	ctl.CheckTodo(id, "日常", "不存在的条目")
+	ctl.CheckTodo(id, "日常", "   ")
+	ctl.CheckTodo("no-such-id", "日常", "买牛奶")
+
+	rec, _ := ctl.recForTest(id)
+	if rec.Content != "【日常】\n买牛奶" {
+		t.Fatalf("守卫场景不应改内容: %q", rec.Content)
+	}
+	if updatedAtForTest(ctl, id) != before {
+		t.Fatal("守卫场景不应刷 UpdatedAt")
+	}
+	if len(ctl.store.DoneEntries()) != 0 || ops.doneChanged != 0 {
+		t.Fatalf("守卫场景不应留痕/广播: %+v %d", ctl.store.DoneEntries(), ops.doneChanged)
+	}
+}
+
+// 还原：留痕条目插回原分类末尾；记录从 done.json 移除；广播 done:changed。
+func TestRestoreDoneBackToOriginalCategory(t *testing.T) {
+	ctl, ops, id := newTodoMain(t, "【日常】\n买牛奶")
+	ctl.store.AddDoneEntry(model.DoneEntry{ID: "d1", Text: "拿快递", Category: "日常", DoneAt: 1})
+
+	ctl.RestoreDone("d1")
+
+	rec, _ := ctl.recForTest(id)
+	if !strings.Contains(rec.Content, "【日常】\n买牛奶\n拿快递") {
+		t.Fatalf("应插回日常末尾: %q", rec.Content)
+	}
+	if got := ctl.store.DoneEntries(); len(got) != 0 {
+		t.Fatalf("留痕应移除: %+v", got)
+	}
+	if ops.doneChanged != 1 {
+		t.Fatalf("应广播: %d", ops.doneChanged)
+	}
+}
+
+// 原分类已不在配置中 → 插回「未分类」末尾。
+func TestRestoreDoneRemovedCategoryGoesUnsorted(t *testing.T) {
+	ctl, _, id := newTodoMain(t, "【日常】\n买牛奶")
+	ctl.store.AddDoneEntry(model.DoneEntry{ID: "d1", Text: "旧活", Category: "已删分类", DoneAt: 1})
+
+	ctl.RestoreDone("d1")
+
+	rec, _ := ctl.recForTest(id)
+	if !strings.Contains(rec.Content, "【未分类】\n旧活") {
+		t.Fatalf("原分类已删应插回未分类: %q", rec.Content)
+	}
+}
+
+// 主便签隐藏时还原：自动召唤（置顶显示聚焦成为当前便签）。
+func TestRestoreDoneHiddenSummons(t *testing.T) {
+	ctl, _, id := newTodoMain(t, "【日常】\n买牛奶")
+	ctl.store.AddDoneEntry(model.DoneEntry{ID: "d1", Text: "新活", Category: "日常", DoneAt: 1})
+	ctl.ToggleSlot(0) // 隐藏主便签
+	if ctl.visible[id] {
+		t.Fatal("前置：主便签应已隐藏")
+	}
+
+	ctl.RestoreDone("d1")
+
+	if !ctl.visible[id] {
+		t.Fatal("还原应召唤隐藏的主便签")
+	}
+	if ctl.activeIDForTest() != id {
+		t.Fatal("召唤后应成为当前便签")
+	}
+}
+
+// 主便签缺失（异常场景）：条目放回留痕，不丢数据。
+func TestRestoreDoneWithoutMainKeepsEntry(t *testing.T) {
+	ctl, _ := newTestController(t) // 无主便签
+	ctl.store.AddDoneEntry(model.DoneEntry{ID: "d1", Text: "活", Category: "日常", DoneAt: 1})
+
+	ctl.RestoreDone("d1")
+
+	got := ctl.store.DoneEntries()
+	if len(got) != 1 || got[0].ID != "d1" {
+		t.Fatalf("无主便签时条目应放回留痕: %+v", got)
+	}
+}
+
+// 改名联动：content 标题行同步改写（分区按新配置顺序重排）+ 留痕记录改写
+// + 设置落盘。
+func TestApplyTodoCategoriesRename(t *testing.T) {
+	ctl, _, id := newTodoMain(t, "【日常】\n买牛奶\n【作业】\n大物作业")
+	ctl.store.AddDoneEntry(model.DoneEntry{ID: "d1", Text: "旧活", Category: "理论学习", DoneAt: 1})
+	next := []string{"日常", "学习", "作业", "项目开发", "未分类"}
+
+	if err := ctl.ApplyTodoCategories(next, map[string]string{"理论学习": "学习"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, _ := ctl.recForTest(id)
+	want := "【日常】\n买牛奶\n【学习】\n【作业】\n大物作业\n【项目开发】\n【未分类】"
+	if rec.Content != want {
+		t.Fatalf("content 应重排:\ngot  %q\nwant %q", rec.Content, want)
+	}
+	if e := ctl.store.DoneEntries()[0]; e.Category != "学习" {
+		t.Fatalf("留痕应同步改写: %+v", e)
+	}
+	if got := ctl.store.Settings().TodoCategories; got[1] != "学习" {
+		t.Fatalf("设置应落盘: %v", got)
+	}
+}
+
+// 合并：源分区待办移入目标末尾 + 留痕改写；删除：待办移入未分类 + 留痕改写。
+func TestApplyTodoCategoriesMergeAndDelete(t *testing.T) {
+	ctl, _, id := newTodoMain(t, "【日常】\n买牛奶\n【作业】\n大物作业\n大物实验报告")
+	ctl.store.AddDoneEntry(model.DoneEntry{ID: "d1", Text: "旧活", Category: "作业", DoneAt: 1})
+
+	if err := ctl.ApplyTodoCategories(
+		[]string{"日常", "理论学习", "项目开发", "未分类"},
+		map[string]string{"作业": "未分类"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, _ := ctl.recForTest(id)
+	want := "【日常】\n买牛奶\n【理论学习】\n【项目开发】\n【未分类】\n大物作业\n大物实验报告"
+	if rec.Content != want {
+		t.Fatalf("删除应把待办移入未分类:\ngot  %q\nwant %q", rec.Content, want)
+	}
+	if e := ctl.store.DoneEntries()[0]; e.Category != "未分类" {
+		t.Fatalf("留痕应改为未分类: %+v", e)
+	}
+
+	// 合并：新增「备考」并把「日常」并进去
+	if err := ctl.ApplyTodoCategories(
+		[]string{"备考", "理论学习", "项目开发", "未分类"},
+		map[string]string{"日常": "备考"}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = ctl.recForTest(id)
+	if !strings.Contains(rec.Content, "【备考】\n买牛奶") {
+		t.Fatalf("合并应把日常待办移入备考: %q", rec.Content)
+	}
+	if e := ctl.store.DoneEntries()[0]; e.Category != "未分类" {
+		t.Fatalf("无关留痕不动: %+v", e)
+	}
+}
+
+// 新增分类：规范化后设置生效；未分类缺失自动补回末尾；主便签不存在报错。
+func TestApplyTodoCategoriesAddAndGuards(t *testing.T) {
+	ctl, ops, id := newTodoMain(t, "【日常】\n买牛奶")
+
+	// 新增（无 rewrites）：content 渲染补出空分区标题行（空分区显式存在）
+	if err := ctl.ApplyTodoCategories([]string{"日常", "新类", "理论学习", "作业", "项目开发", "未分类"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := ctl.recForTest(id)
+	if !strings.Contains(rec.Content, "【新类】") {
+		t.Fatalf("新分区标题应显式存在: %q", rec.Content)
+	}
+
+	// 未分类缺失 → 规范化补回末尾
+	if err := ctl.ApplyTodoCategories([]string{"日常", "新类"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := ctl.store.Settings().TodoCategories
+	if got[len(got)-1] != model.TodoUnsorted || len(got) != 3 {
+		t.Fatalf("未分类应自动补回末尾: %v", got)
+	}
+
+	// 主便签缺失报错
+	ctl2, _ := newTestController(t)
+	if err := ctl2.ApplyTodoCategories(model.DefaultTodoCategories(), nil); err == nil {
+		t.Fatal("主便签不存在应报错")
+	}
+
+	if ops.doneChanged != 2 {
+		t.Fatalf("每次成功应用应广播（ctl2 的广播在其替身上）: %d", ops.doneChanged)
+	}
+}
+
+// alt+z 目标为主便签：拦截不进确认态，弹通知提示。
+func TestDestroyCurrentBlockedForMain(t *testing.T) {
+	ctl, ops := newTestController(t)
+	ctl.ToggleSlot(0) // 只有主便签
+	id := ctl.noteIDs()[0]
+	ctl.SetContent(id, "待办内容") // 使其成为当前便签
+
+	ctl.DestroyCurrent()
+
+	if len(ops.confirms) != 0 {
+		t.Fatalf("主便签不应进确认态: %v", ops.confirms)
+	}
+	if len(ops.notify) == 0 || !strings.Contains(ops.notify[0], "不可销毁") {
+		t.Fatalf("应弹提示: %v", ops.notify)
+	}
+	if !ctl.hasNote(id) {
+		t.Fatal("主便签应仍在")
+	}
+}
+
+// 当前便签为辅助便签时照常销毁（回归：拦截不得误伤）。
+func TestDestroyCurrentAllowsAux(t *testing.T) {
+	ctl, ops := newTestController(t)
+	ctl.ToggleSlot(0)
+	ctl.ToggleSlot(1)
+	aux := ctl.noteIDs()[1]
+	ctl.SetContent(aux, "编辑过")
+
+	ctl.DestroyCurrent()
+
+	if len(ops.confirms) != 1 || ops.confirms[0] != aux {
+		t.Fatalf("辅助便签应照常进确认态: %v", ops.confirms)
+	}
+}
+
+// ConfirmDestroy 兜底守卫：即使确认态被拉起，主便签也真正不销毁、不入回收站。
+func TestConfirmDestroyGuardForMain(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(0)
+	id := ctl.noteIDs()[0]
+	ctl.SetContent(id, "内容")
+	ctl.RequestDestroy(id) // 直接请求确认态（绕过 DestroyCurrent 的模拟路径）
+
+	ctl.ConfirmDestroy(id)
+
+	if !ctl.hasNote(id) {
+		t.Fatal("主便签不应被销毁")
+	}
+	if len(ctl.store.RecycleEntries()) != 0 {
+		t.Fatal("主便签不应入回收站")
+	}
+}
+
+// 主便签默认标题「待办事项」（新建补建统一覆盖）；辅助/自由便签仍「便签n」。
+func TestCreateSlotNoteMainTitle(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(0)
+	ctl.ToggleSlot(1)
+	ids := ctl.noteIDs()
+	mainRec, _ := ctl.recForTest(ids[0])
+	if mainRec.Title != model.MainNoteTitle {
+		t.Fatalf("主便签默认标题应为「待办事项」: %q", mainRec.Title)
+	}
+	auxRec, _ := ctl.recForTest(ids[1])
+	if auxRec.Title != "便签2" {
+		t.Fatalf("辅助便签默认标题应顺延（总数含主便签）: %q", auxRec.Title)
 	}
 }

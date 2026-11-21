@@ -50,7 +50,7 @@ go build ./... && go vet ./... && go test ./...   # 回归三件套
 
 数据目录：`%APPDATA%\bugzia-notes\`（经 `os.UserConfigDir()` 拼接），与 bugzia 数据互不读写。
 
-### notes.json（便签实例，仅钉住 
+### notes.json（便签实例，仅钉住）
 
 ```jsonc
 {

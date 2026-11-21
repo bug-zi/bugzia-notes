@@ -3,6 +3,7 @@
    踩过的「最后一张覆盖前面所有」串台教训）。 */
 
 import * as wails from "/wails/runtime.js";
+import { mountTodoView } from "/assets/note-todo.js";
 
 const params = new URLSearchParams(location.search);
 const id = params.get("id") || "";
@@ -32,8 +33,20 @@ const spFields = {
   radius: document.getElementById("radius"), font: document.getElementById("font"),
 };
 const spBgColor = document.getElementById("bg-color");
+const catspanelEl = document.getElementById("catspanel");
+const catListEl = document.getElementById("cat-list");
+const catNewEl = document.getElementById("cat-new");
+const btnCatAdd = document.getElementById("btn-cat-add");
+const catMsgEl = document.getElementById("cat-msg");
 
 let content = ""; // 最近提交内容
+let cats = [];    // 分类配置（hydrate 载荷 todoCats，v4.0.0）
+// 主便签待办视图（slot=0 时接管 #body 的渲染与编辑，v4.0.0）
+const todosView = mountTodoView({
+  bodyEl,
+  id,
+  onContent(next) { content = next; }, // 本地重排后同步 content（复制按钮取最新）
+});
 let pinned = false;
 let fixed = false;      // 钉住：不受其他便签挤压（v3.3.0）
 let menuOpen = false;   // 更多菜单展开态
@@ -60,7 +73,7 @@ wails.Events.On("note:hydrate", (ev) => {
   if (!data || data.id !== id) return; // 只认发给自己的（防串台）
   slot = data.slot ?? 0;
   applyTitle(data.title ?? "");
-  applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked, !!data.fixed);
+  applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked, !!data.fixed, data.todoCats ?? null);
 });
 
 wails.Events.On("note:destroy-confirm", (ev) => {
@@ -87,21 +100,35 @@ wails.Events.On("note:fixed-sync", (ev) => {
 // 挂载即向 Go 请求注水
 wails.Events.Emit("note:ready", { id });
 
-function applyContent(next, nextPinned, settings, nextLocked, nextFixed) {
+function applyContent(next, nextPinned, settings, nextLocked, nextFixed, todoCats) {
   content = next ?? "";
   pinned = !!nextPinned;
   fixed = !!nextFixed;
   locked = !!nextLocked;
   curStyle = settings ?? null;
+  if (Array.isArray(todoCats) && todoCats.length > 0) cats = todoCats;
   applyStyle(settings);
-  render();
   refreshPinBtn();
   refreshFixBtn();
-  if (panelOpen) syncLockUI(); // 面板开着时跟随重推刷新（锁关=全局被改）
-  if (content === "" && !editing) {
-    startEdit();
-    focusEditor("start");
+  if (slot === 0) {
+    // 主便签 = 待办列表（v4.0.0）：分区条目视图；销毁项隐藏（不可销毁）
+    editing = false;
+    textEl.hidden = true;
+    ta.hidden = true;
+    btnDestroy.hidden = true;
+    todosView.show();
+    todosView.render(content, cats);
+    if (panelOpen) renderCatList();
+  } else {
+    btnDestroy.hidden = false;
+    todosView.hide();
+    render();
+    if (content === "" && !editing) {
+      startEdit();
+      focusEditor("start");
+    }
   }
+  if (panelOpen) syncLockUI(); // 面板开着时跟随重推刷新（锁关=全局被改）
 }
 
 function applyTitle(next) {
@@ -238,6 +265,7 @@ bodyEl.addEventListener("click", (e) => {
     closeMenu();
     return;
   }
+  if (slot === 0) return; // 待办视图点击语义在 note-todo.js（v4.0.0）
   if (!editing && !confirming) {
     const pos = caretIndexAtClick(e);
     startEdit();
@@ -367,6 +395,12 @@ function openPanel() {
   commitEdit();           // 编辑态先提交草稿
   panelOpen = true;
   stylepanelEl.hidden = false;
+  catspanelEl.hidden = slot !== 0; // 分类管理仅主便签（v4.0.0）
+  if (slot === 0) {
+    catMsgEl.textContent = "";
+    mergingCat = null;
+    renderCatList();
+  }
   syncLockUI();
 }
 
@@ -638,3 +672,146 @@ document.addEventListener("keydown", (e) => {
     closeMenu();
   }
 }, true);
+
+/* ── 分类管理（主便签设置面板，v4.0.0）────────────────────────────── */
+
+let mergingCat = null; // 「并」点击后的源分类（进入目标选择模式）
+
+function renderCatList() {
+  catListEl.textContent = "";
+  const inMerge = mergingCat !== null;
+  cats.forEach((cat, i) => {
+    const row = document.createElement("div");
+    row.className = "note-cat-row";
+    const name = document.createElement("span");
+    name.className = "note-cat-name";
+    name.textContent = cat;
+    row.appendChild(name);
+    if (inMerge) {
+      if (cat !== mergingCat) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "note-btn mini";
+        b.textContent = "并入";
+        b.title = "把「" + mergingCat + "」的待办并入「" + cat + "」";
+        b.addEventListener("click", () => {
+          const src = mergingCat;
+          mergingCat = null;
+          catApply(cats.filter((c) => c !== src), { [src]: cat });
+        });
+        row.appendChild(b);
+      }
+    } else if (cat === "未分类") {
+      const hint = document.createElement("span");
+      hint.className = "note-cat-fixed";
+      hint.textContent = "固定";
+      row.appendChild(hint);
+    } else {
+      name.title = "双击改名";
+      name.addEventListener("dblclick", () => startCatRename(row, cat, i));
+      const mk = (label, title, fn) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "note-btn mini";
+        b.textContent = label;
+        b.title = title;
+        b.addEventListener("click", fn);
+        return b;
+      };
+      if (i > 0) row.appendChild(mk("上", "上移", () => catMove(i, -1)));
+      if (i < cats.length - 2) row.appendChild(mk("下", "下移", () => catMove(i, 1))); // 未分类恒最后
+      row.appendChild(mk("并", "合并到其他分类", () => {
+        mergingCat = cat;
+        catMsgEl.textContent = "点击目标分类的「并入」完成合并；点「取消合并」放弃";
+        renderCatList();
+      }));
+      row.appendChild(mk("删", "删除（待办移入未分类）", () => {
+        catApply(cats.filter((c) => c !== cat), { [cat]: "未分类" });
+      }));
+    }
+    catListEl.appendChild(row);
+  });
+  if (inMerge) {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "note-btn mini";
+    cancel.textContent = "取消合并";
+    cancel.addEventListener("click", () => {
+      mergingCat = null;
+      catMsgEl.textContent = "";
+      renderCatList();
+    });
+    catListEl.appendChild(cancel);
+  }
+}
+
+function catMove(i, d) {
+  const next = cats.slice();
+  const tmp = next[i];
+  next[i] = next[i + d];
+  next[i + d] = tmp;
+  catApply(next, {});
+}
+
+function startCatRename(row, oldName, i) {
+  if (row.querySelector("input")) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 30;
+  input.value = oldName;
+  input.className = "note-cat-rename";
+  const name = row.querySelector(".note-cat-name");
+  name.hidden = true;
+  row.insertBefore(input, name);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (ok) => {
+    if (done) return;
+    done = true;
+    input.remove();
+    name.hidden = false;
+    if (!ok) return;
+    const v = input.value.trim();
+    if (v === "" || v === oldName) return;
+    const next = cats.slice();
+    next[i] = v;
+    catApply(next, { [oldName]: v });
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      finish(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+async function catApply(nextCats, rewrites) {
+  try {
+    await wails.Call.ByName(NS + "ApplyTodoCategories", nextCats, rewrites);
+    catMsgEl.textContent = "";
+    // 成功后 Go 单窗重推 hydrate → applyContent 更新 cats/content → 面板重绘
+  } catch (err) {
+    catMsgEl.textContent = "应用失败：" + err;
+    renderCatList();
+  }
+}
+
+function addCat() {
+  const v = catNewEl.value.trim();
+  if (v === "") return;
+  catNewEl.value = "";
+  const rest = cats.slice(0, cats.length - 1); // 未分类之前追加
+  catApply(rest.concat([v, "未分类"]), {});
+}
+btnCatAdd.addEventListener("click", addCat);
+catNewEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    addCat();
+  }
+});

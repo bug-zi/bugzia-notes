@@ -1,0 +1,37 @@
+/* 记事簿窗口（v4.0.0）：主题玫红系，布局对齐回收站窗口。 */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  background: #faf7f8; color: #4a3a40;
+}
+.panel { padding: 14px 16px; }
+h2 { margin: 0 0 10px; font-size: 15px; color: #9e1b32; }
+.viewtoggle { display: flex; gap: 6px; margin-bottom: 10px; }
+.vbtn {
+  border: 1px solid #d8c2ca; background: #fff; color: #7a5560;
+  border-radius: 8px; padding: 4px 12px; cursor: pointer; font-size: 13px;
+}
+.vbtn.active { background: #c95877; border-color: #c95877; color: #fff; }
+.list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 60vh; overflow-y: auto;
+}
+.row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 8px;
+  background: #fff; border: 1px solid #eadce1; border-radius: 8px;
+}
+.row .time {
+  flex: none; font-size: 12px; color: #a08390;
+  font-variant-numeric: tabular-nums;
+}
+.row .text { flex: 1; min-width: 0; word-break: break-all; font-size: 13px; }
+.row .restore {
+  flex: none;
+  border: 1px solid #d8c2ca; background: #fff; color: #9e1b32;
+  border-radius: 6px; padding: 1px 8px; cursor: pointer; font-size: 12px;
+}
+.row .restore:hover { background: #f7e9ee; }
+.group { font-weight: 600; font-size: 13px; color: #7a5560; margin: 8px 0 2px; }
+.hint { font-size: 12px; color: #a08390; }

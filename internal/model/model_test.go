@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -125,5 +126,88 @@ func TestNextDefaultTitleSkipsTaken(t *testing.T) {
 	}
 	if got := NextDefaultTitle(map[string]bool{"便签1": true}, 1); got != "便签2" {
 		t.Fatalf("自定义标题应参与占用判定: %q", got)
+	}
+}
+
+// v4.0.0 默认分类顺序（会话确认）。
+func TestDefaultTodoCategories(t *testing.T) {
+	got := DefaultTodoCategories()
+	want := []string{"日常", "理论学习", "作业", "项目开发", "未分类"}
+	if len(got) != len(want) {
+		t.Fatalf("默认分类应为 5 项: %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("顺序不符 [%d]: got %v want %v", i, got, want)
+		}
+	}
+}
+
+// 规范化：未分类强制存在且恒排末尾；去空白项；去重（保留首个）。
+func TestNormalizeTodoCategories(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want []string
+	}{
+		{[]string{"a", "b"}, []string{"a", "b", TodoUnsorted}},
+		{[]string{"a", TodoUnsorted, "b"}, []string{"a", "b", TodoUnsorted}},
+		{[]string{"a", "a", "  "}, []string{"a", TodoUnsorted}},
+		{nil, []string{TodoUnsorted}},
+	}
+	for i, c := range cases {
+		got := NormalizeTodoCategories(c.in)
+		if len(got) != len(c.want) {
+			t.Fatalf("case %d: got %v want %v", i, got, c.want)
+		}
+		for j := range c.want {
+			if got[j] != c.want[j] {
+				t.Fatalf("case %d [%d]: got %v want %v", i, j, got, c.want)
+			}
+		}
+	}
+}
+
+// 规范化：trim + rune 截 30（与 MaxTitleLen 同限）。
+func TestNormalizeTodoCategoriesTrimAndClip(t *testing.T) {
+	long := strings.Repeat("长", 40)
+	got := NormalizeTodoCategories([]string{"  x  ", long})
+	if got[0] != "x" {
+		t.Fatalf("应 trim: %v", got)
+	}
+	if len([]rune(got[1])) != MaxTitleLen {
+		t.Fatalf("应 rune 截 30: %q", got[1])
+	}
+}
+
+// 标题行识别：整行恰为「【名】」才算，正文夹杂不算（防误判）。
+func TestTodoHeaderName(t *testing.T) {
+	if n, ok := TodoHeaderName("【日常】"); !ok || n != "日常" {
+		t.Fatalf("应识别: %q %v", n, ok)
+	}
+	if n, ok := TodoHeaderName("  【日常】 "); !ok || n != "日常" {
+		t.Fatalf("应容忍首尾空白: %q %v", n, ok)
+	}
+	if _, ok := TodoHeaderName("【】"); ok {
+		t.Fatal("空名不是标题行")
+	}
+	if _, ok := TodoHeaderName("买【日常】牛奶"); ok {
+		t.Fatal("正文夹杂不是标题行")
+	}
+	if _, ok := TodoHeaderName("【日常】买牛奶"); ok {
+		t.Fatal("后缀粘连不是标题行")
+	}
+}
+
+// 迁移保底：把 content 扫出的未知名插到「未分类」之前（已有的不重复插）。
+func TestInsertTodoCategories(t *testing.T) {
+	got := InsertTodoCategories(DefaultTodoCategories(), []string{"自定义", "日常", TodoUnsorted})
+	want := []string{"日常", "理论学习", "作业", "项目开发", "自定义", TodoUnsorted}
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("[%d] got %v want %v", i, got, want)
+		}
 	}
 }

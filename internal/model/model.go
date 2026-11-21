@@ -3,6 +3,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,8 @@ const (
 	MaxCoord = 4096
 	// RecycleMaxEntries 回收站条目上限，超出裁掉最旧。
 	RecycleMaxEntries = 100
+	// TodoUnsorted 兜底分类名：恒存在、恒排末尾、不可删改（v4.0.0）。
+	TodoUnsorted = "未分类"
 )
 
 // NoteRecord 单张便签。几何为逻辑像素，语义与 bugzia NoteRecord 一致；
@@ -67,6 +70,82 @@ type RecycleEntry struct {
 	DeletedAt int64  `json:"deleted_at"` // 毫秒时间戳，排序键
 }
 
+// MainNoteTitle 主便签默认标题（v4.0.0 起；「便签n」顺延机制仅用于辅助/自由便签）。
+const MainNoteTitle = "待办事项"
+
+// DoneEntry 留痕条目：主便签打勾完成的待办（v4.0.0，data\done.json）。
+type DoneEntry struct {
+	ID       string `json:"id"`       // 随机串（还原按 id 定位，防位置竞态）
+	Text     string `json:"text"`     // 待办文本
+	Category string `json:"category"` // 完成时所属分类
+	DoneAt   int64  `json:"done_at"`  // 毫秒时间戳（排序键）
+}
+
+// TodoHeaderName 识别「【分类名】」标题行：整行恰为该形态才返回名称与 true
+// （调用方再校验名称是否在已配置分类中，防止待办正文恰似【x】被误判）。
+func TodoHeaderName(line string) (string, bool) {
+	t := strings.TrimSpace(line)
+	if !strings.HasPrefix(t, "【") || !strings.HasSuffix(t, "】") {
+		return "", false
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(t, "【"), "】")
+	if strings.TrimSpace(name) == "" {
+		return "", false
+	}
+	return name, true
+}
+
+// DefaultTodoCategories 初始分类（v4.0.0，会话确认顺序）。
+func DefaultTodoCategories() []string {
+	return []string{"日常", "理论学习", "作业", "项目开发", TodoUnsorted}
+}
+
+// NormalizeTodoCategories 规范化分类配置：trim、rune 截 MaxTitleLen、去空白项、
+// 去重（保留首个）、「未分类」强制存在且恒排末尾。
+func NormalizeTodoCategories(cats []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, c := range cats {
+		c = strings.TrimSpace(c)
+		if runes := []rune(c); len(runes) > MaxTitleLen {
+			c = string(runes[:MaxTitleLen])
+		}
+		if c == "" || seen[c] || c == TodoUnsorted {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return append(out, TodoUnsorted)
+}
+
+// InsertTodoCategories 把 found 中未配置的名插入「未分类」之前（v4 迁移保底用，
+// 幂等：已在配置中的不重复插）。
+func InsertTodoCategories(cats, found []string) []string {
+	known := map[string]bool{}
+	for _, c := range cats {
+		known[c] = true
+	}
+	add := []string{}
+	for _, f := range found {
+		if !known[f] && f != TodoUnsorted {
+			known[f] = true
+			add = append(add, f)
+		}
+	}
+	if len(add) == 0 {
+		return cats
+	}
+	out := []string{}
+	for _, c := range cats {
+		if c == TodoUnsorted {
+			out = append(out, add...)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 // NoteColor 槽位色（辅助便签底色，设置窗口可改）。
 type NoteColor struct {
 	R int `json:"r"`
@@ -102,9 +181,10 @@ type HotkeySettings struct {
 
 // Settings settings.json 的内存形状。
 type Settings struct {
-	Note      NoteSettings   `json:"note"`
-	Hotkeys   HotkeySettings `json:"hotkeys"`
-	AuxColors [5]NoteColor   `json:"aux_colors"` // 辅助便签 1~5 底色
+	Note           NoteSettings   `json:"note"`
+	Hotkeys        HotkeySettings `json:"hotkeys"`
+	AuxColors      [5]NoteColor   `json:"aux_colors"`      // 辅助便签 1~5 底色
+	TodoCategories []string       `json:"todo_categories"` // 主便签待办分类（v4.0.0）
 }
 
 // DefaultSettings 返回默认设置（= bugzia DEFAULT_NOTE + 槽位模型默认键位）。
@@ -120,7 +200,8 @@ func DefaultSettings() Settings {
 			Toggle: "alt+n", Main: "alt+c", DestroyCurrent: "alt+z",
 			Aux1: "alt+1", Aux2: "alt+2", Aux3: "alt+3", Aux4: "alt+4", Aux5: "alt+5",
 		},
-		AuxColors: DefaultAuxColors(),
+		AuxColors:      DefaultAuxColors(),
+		TodoCategories: DefaultTodoCategories(),
 	}
 }
 

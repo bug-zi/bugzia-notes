@@ -22,7 +22,7 @@ bugzia-notes — Windows 便签桌面应用（Go + Wails v3），把 Bugzia 桌�
 
 **v3.3.0（2026-11-20，已验收）：钉住（Fixed，不受挤压推动）+ 置顶改名 + 头部三键「钉住/复制/更多」。** 原钉住（保持最上层）改名**置顶**（`Pinned`，行为不变）；新**钉住**（`Fixed`）便签不被挤压弹开/装箱挪位，仍可被拖动/缩放、自己拖动时照常挤开别人；置顶/设置/销毁收进便签头部「更多」下拉菜单（复制提回头部）。notes.json v3 增量字段零迁移。spec/plan 见 `docs/project/便签/archive/2026-11-20-v3.3.0-pin-immovable-{design,plan}.md`（已归档）。
 
-**v3.3.1（2026-11-21）：背景色取色全面改调色盘（`input[type=color]`，与辅助便签同款）——设置窗口「样式默认」与便签「设置」样式面板同步改造；`input` 事件实时生效 + 200ms 尾随补应用防拖动丢末值；六样例色保留、点击样例同步写入调色盘；样式面板未锁定时调色盘随其余字段一并禁用。数据/后端零改动（`ApplyNoteStyle`/`ApplyNoteStyleFor` 照旧收 bg_r/g/b）。** spec/plan 见 `docs/project/便签/archive/2026-11-21-v3.3.1-style-default-picker-{design,plan}.md`（已归档）。
+**v3.3.1（2026-11-21，已验收）：背景色取色全面改调色盘（`input[type=color]`，与辅助便签同款）——设置窗口「样式默认」与便签「设置」样式面板同步改造；`input` 事件实时生效 + 200ms 尾随补应用防拖动丢末值；六样例色保留、点击样例同步写入调色盘；样式面板未锁定时调色盘随其余字段一并禁用。数据/后端零改动（`ApplyNoteStyle`/`ApplyNoteStyleFor` 照旧收 bg_r/g/b）。** spec/plan 见 `docs/project/便签/archive/2026-11-21-v3.3.1-style-default-picker-{design,plan}.md`（已归档）。
 
 ## 文档体系与维护权责（最重要）
 

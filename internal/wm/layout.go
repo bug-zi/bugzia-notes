@@ -8,7 +8,7 @@ const PlaceMargin = 8
 
 // PackTopLeft 贪心左上装箱（bugzia packTopLeft 的逐行移植）：
 // 从屏幕左上角开始逐行扫描（行高 = 新便签高）；行内右移紧贴已有便签
-//（无间隙）；行满换下一行；全程不出屏；全满时夹回左上锚点。
+// （无间隙）；行满换下一行；全程不出屏；全满时夹回左上锚点。
 // 返回新便签左上角的逻辑像素坐标。
 func PackTopLeft(rects []Rect, w, h, screenW, screenH float32) (float32, float32) {
 	const m = PlaceMargin

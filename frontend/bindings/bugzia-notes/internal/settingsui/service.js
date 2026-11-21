@@ -58,6 +58,16 @@ export function ApplyNoteStyleFor(id, style) {
 }
 
 /**
+ * ApplyTodoCategories 应用分类配置（主便签设置面板；content/留痕/设置联动在控制器）。
+ * @param {string[]} cats
+ * @param {{ [_ in string]?: string }} rewrites
+ * @returns {$CancellablePromise<void>}
+ */
+export function ApplyTodoCategories(cats, rewrites) {
+    return $Call.ByID(1662865654, cats, rewrites);
+}
+
+/**
  * CheckUpdate 手动检查更新（设置窗口按钮）：跳过 24h 节流，每个终点都有反馈。
  * @returns {$CancellablePromise<{ [_ in string]?: any }>}
  */
@@ -87,12 +97,32 @@ export function GetSettings() {
 }
 
 /**
+ * ListDone 留痕条目快照（新到旧），记事簿窗口经 Call.ByName 调用。
+ * @returns {$CancellablePromise<model$0.DoneEntry[]>}
+ */
+export function ListDone() {
+    return $Call.ByID(1092149058).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
+/**
  * ListRecycle 回收站条目快照（新到旧），回收站窗口经 Call.ByName 调用。
  * @returns {$CancellablePromise<model$0.RecycleEntry[]>}
  */
 export function ListRecycle() {
     return $Call.ByID(3056832839).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType5($result);
+    }));
+}
+
+/**
+ * ListTodoCategories 当前分类配置（主便签设置面板回填；hydrate 载荷亦带）。
+ * @returns {$CancellablePromise<string[]>}
+ */
+export function ListTodoCategories() {
+    return $Call.ByID(611451250).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType6($result);
     }));
 }
 
@@ -114,6 +144,15 @@ export function MigrateBugziaConfig() {
  */
 export function OpenChangelog() {
     return $Call.ByID(379572880);
+}
+
+/**
+ * RestoreDone 还原一条留痕（记事簿窗口「还原」按钮，薄封装转发控制器）。
+ * @param {string} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function RestoreDone(id) {
+    return $Call.ByID(2338903164, id);
 }
 
 /**
@@ -165,5 +204,8 @@ export function Version() {
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);
 const $$createType1 = model$0.Settings.createFrom;
-const $$createType2 = model$0.RecycleEntry.createFrom;
+const $$createType2 = model$0.DoneEntry.createFrom;
 const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = model$0.RecycleEntry.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = $Create.Array($Create.Any);

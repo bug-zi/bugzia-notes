@@ -16,7 +16,7 @@ import (
 )
 
 // Version 应用版本（设置窗口展示）。
-const Version = "v3.3.1"
+const Version = "v4.0.0"
 
 // Service 暴露给前端的服务（Wails 绑定）。
 type Service struct {
@@ -41,6 +41,20 @@ func (s *Service) Version() string { return Version }
 
 // ListRecycle 回收站条目快照（新到旧），回收站窗口经 Call.ByName 调用。
 func (s *Service) ListRecycle() []model.RecycleEntry { return s.st.RecycleEntries() }
+
+// ListDone 留痕条目快照（新到旧），记事簿窗口经 Call.ByName 调用。
+func (s *Service) ListDone() []model.DoneEntry { return s.st.DoneEntries() }
+
+// RestoreDone 还原一条留痕（记事簿窗口「还原」按钮，薄封装转发控制器）。
+func (s *Service) RestoreDone(id string) { s.ctl.RestoreDone(id) }
+
+// ListTodoCategories 当前分类配置（主便签设置面板回填；hydrate 载荷亦带）。
+func (s *Service) ListTodoCategories() []string { return s.st.Settings().TodoCategories }
+
+// ApplyTodoCategories 应用分类配置（主便签设置面板；content/留痕/设置联动在控制器）。
+func (s *Service) ApplyTodoCategories(cats []string, rewrites map[string]string) error {
+	return s.ctl.ApplyTodoCategories(cats, rewrites)
+}
 
 // ApplyNoteStyle 应用样式默认：实时生效（全部便签重绘）并落盘。
 func (s *Service) ApplyNoteStyle(note model.NoteSettings) error {

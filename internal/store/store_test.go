@@ -205,7 +205,7 @@ func TestLoadNotesV1MigratesLatestToMain(t *testing.T) {
 	if got[0].X != 30 || got[0].Y != 40 || got[0].Content != "newest" {
 		t.Fatalf("字段应全保留: %+v", got[0])
 	}
-	if got[0].Title != "便签1" {
+	if got[0].Title != model.MainNoteTitle {
 		t.Fatalf("v1 直迁应补默认标题: %+v", got[0])
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, "notes.json.bak-*"))
@@ -296,7 +296,7 @@ func TestLoadNotesV2AssignsDefaultTitles(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := s.LoadNotes()
-	if got[0].Title != "便签1" {
+	if got[0].Title != model.MainNoteTitle {
 		t.Fatalf("空标题应按序补默认: %+v", got[0])
 	}
 	if got[1].Title != "购物清单" {
@@ -306,7 +306,7 @@ func TestLoadNotesV2AssignsDefaultTitles(t *testing.T) {
 	if !strings.Contains(string(raw), `"version": 3`) {
 		t.Fatalf("v2 加载后应就地重写为 v3: %s", raw)
 	}
-	if again := s.LoadNotes(); again[0].Title != "便签1" || again[1].Title != "购物清单" {
+	if again := s.LoadNotes(); again[0].Title != model.MainNoteTitle || again[1].Title != "购物清单" {
 		t.Fatalf("二次加载应幂等: %+v", again)
 	}
 }
@@ -323,8 +323,8 @@ func TestLoadNotesV3EmptyTitleFilledInMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := s.LoadNotes()
-	if got[0].Title != "便签1" {
-		t.Fatalf("v3 空标题应内存补默认: %+v", got[0])
+	if got[0].Title != model.MainNoteTitle {
+		t.Fatalf("v3 空标题应内存补默认（主便签默认名为待办事项）: %+v", got[0])
 	}
 }
 
@@ -352,5 +352,193 @@ func TestLoadNotesV3WithoutFixedKey(t *testing.T) {
 	got := s.LoadNotes()
 	if len(got) != 1 || got[0].Fixed {
 		t.Fatalf("缺 fixed 键应读为 false: %+v", got)
+	}
+}
+
+// done.json round-trip：头插保序（新到旧）、无上限不裁剪、重开仍在。
+func TestDoneRoundTripNewestFirstNoCap(t *testing.T) {
+	dir := t.TempDir()
+	st, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 150; i++ {
+		st.AddDoneEntry(model.DoneEntry{ID: fmt.Sprintf("id%d", i), Text: fmt.Sprintf("任务%d", i), Category: "日常", DoneAt: int64(1000 + i)})
+	}
+	got := st.DoneEntries()
+	if len(got) != 150 {
+		t.Fatalf("无上限不应裁剪: %d", len(got))
+	}
+	if got[0].ID != "id149" || got[149].ID != "id0" {
+		t.Fatalf("应新到旧头插: first=%s last=%s", got[0].ID, got[149].ID)
+	}
+	st.Close()
+	st2, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	if again := st2.DoneEntries(); len(again) != 150 || again[0].ID != "id149" {
+		t.Fatalf("重开应恢复留痕: %d %s", len(again), again[0].ID)
+	}
+}
+
+// RemoveDoneEntry 按 id 删除并返回条目；不存在报 false。
+func TestRemoveDoneEntryByID(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.AddDoneEntry(model.DoneEntry{ID: "a", Text: "甲", Category: "日常", DoneAt: 1})
+	st.AddDoneEntry(model.DoneEntry{ID: "b", Text: "乙", Category: "作业", DoneAt: 2})
+	e, ok := st.RemoveDoneEntry("a")
+	if !ok || e.Text != "甲" {
+		t.Fatalf("应删中 a: %+v %v", e, ok)
+	}
+	got := st.DoneEntries()
+	if len(got) != 1 || got[0].ID != "b" {
+		t.Fatalf("应只剩 b: %+v", got)
+	}
+	if _, ok := st.RemoveDoneEntry("zz"); ok {
+		t.Fatal("不存在的 id 应报 false")
+	}
+}
+
+// RewriteDoneCategories 批量改写分类名（改名/合并/删除联动），立即落盘。
+func TestRewriteDoneCategories(t *testing.T) {
+	dir := t.TempDir()
+	st, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.AddDoneEntry(model.DoneEntry{ID: "a", Text: "甲", Category: "旧名", DoneAt: 1})
+	st.AddDoneEntry(model.DoneEntry{ID: "b", Text: "乙", Category: "日常", DoneAt: 2})
+	st.RewriteDoneCategories(map[string]string{"旧名": "未分类"})
+	got := st.DoneEntries()
+	if got[1].Category != "未分类" || got[0].Category != "日常" {
+		t.Fatalf("应只改命中的: %+v", got)
+	}
+	st.Close()
+	st2, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	if st2.DoneEntries()[1].Category != "未分类" {
+		t.Fatalf("改写应落盘: %+v", st2.DoneEntries())
+	}
+}
+
+// done.json 损坏回退空表。
+func TestLoadDoneCorruptFallsBackToEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "done.json"), []byte("{broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if got := st.DoneEntries(); len(got) != 0 {
+		t.Fatalf("损坏应回退空表: %+v", got)
+	}
+}
+
+// settings：todo_categories 缺省回退默认五类（零迁移）。
+func TestLoadSettingsTodoCategoriesDefault(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	want := model.DefaultTodoCategories()
+	got := st.Settings().TodoCategories
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("[%d] got %v want %v", i, got, want)
+		}
+	}
+}
+
+// settings：todo_categories round-trip（settingsFile 带字段落盘）。
+func TestSaveSettingsRoundTripTodoCategories(t *testing.T) {
+	dir := t.TempDir()
+	st, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := st.Settings()
+	cur.TodoCategories = []string{"a", "未分类"}
+	if err := st.SaveSettingsNow(cur); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st2, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	got := st2.Settings().TodoCategories
+	if len(got) != 2 || got[0] != "a" || got[1] != "未分类" {
+		t.Fatalf("round-trip 失败: %v", got)
+	}
+}
+
+// v4 迁移：主便签默认标题「便签n」→「待办事项」，content 中未配置的
+// 「【名】」标题行自动补进 todo_categories（未分类之前）；幂等。
+func TestMigrateV4MainTitleAndHeaders(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"version":3,"notes":[{"id":"m","content":"【自定义】\n任务A","title":"便签1","x":-1,"y":-1,"w":240,"h":220,"pinned":true,"slot":0,"created_at":1,"updated_at":1,"style":null}]}`
+	if err := os.WriteFile(filepath.Join(dir, "notes.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := st.LoadNotes()
+	if len(got) != 1 || got[0].Title != model.MainNoteTitle {
+		t.Fatalf("主便签应改名为「待办事项」: %+v", got)
+	}
+	cats := st.Settings().TodoCategories
+	iCustom, iUn := -1, -1
+	for i, c := range cats {
+		if c == "自定义" {
+			iCustom = i
+		}
+		if c == model.TodoUnsorted {
+			iUn = i
+		}
+	}
+	if iCustom < 0 || iUn < 0 || iCustom >= iUn {
+		t.Fatalf("自定义应插在未分类之前: %v", cats)
+	}
+	again := st.LoadNotes()
+	if again[0].Title != model.MainNoteTitle {
+		t.Fatalf("迁移应幂等: %+v", again)
+	}
+	st.Close()
+}
+
+// v4 迁移：自定义标题不动。
+func TestMigrateV4KeepsCustomTitle(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"version":3,"notes":[{"id":"m","content":"","title":"我的清单","x":-1,"y":-1,"w":240,"h":220,"pinned":true,"slot":0,"created_at":1,"updated_at":1,"style":null}]}`
+	if err := os.WriteFile(filepath.Join(dir, "notes.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	got := st.LoadNotes()
+	if len(got) != 1 || got[0].Title != "我的清单" {
+		t.Fatalf("自定义标题不应被迁移改写: %+v", got)
 	}
 }

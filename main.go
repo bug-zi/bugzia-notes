@@ -193,6 +193,7 @@ func initTray(app *application.App) {
 		return item
 	}
 	_ = mk("回收站", func() { openTrash(app) })
+	_ = mk("记事簿", func() { openLogbook(app) })
 	_ = mk("设置", func() { openSettings(app) })
 	menu.AddSeparator()
 	quitBtn := menu.Add("退出")
@@ -247,6 +248,23 @@ func openChangelog(app *application.App) {
 		URL:             "/changelog.html",
 		Width:           460,
 		Height:          600,
+		DevToolsEnabled: true,
+	})
+}
+
+// openLogbook 打开记事簿窗口（单例，窗体参数对齐回收站窗口；v4.0.0）。
+func openLogbook(app *application.App) {
+	if win := lookupWindow(app, "logbook"); win != nil {
+		win.Show()
+		win.Focus()
+		return
+	}
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:            "logbook",
+		Title:           "bugzia-notes 记事簿",
+		URL:             "/logbook.html",
+		Width:           460,
+		Height:          560,
 		DevToolsEnabled: true,
 	})
 }
@@ -353,6 +371,11 @@ func wireNoteEvents(app *application.App, ctl *wm.Controller) {
 			ctl.CancelEdit(id)
 		}
 	})
+	on("note:todo-check", func(m map[string]any) {
+		if id := evStr(m, "id"); id != "" {
+			ctl.CheckTodo(id, evStr(m, "category"), evStr(m, "text"))
+		}
+	})
 }
 
 func evStr(m map[string]any, key string) string {
@@ -451,8 +474,8 @@ func updateFailDialog(app *application.App, msg string) {
 // ── wailsOps：WindowOps 的 Wails 实现 ──────────────────────────────────
 
 type wailsOps struct {
-	app *application.App
-	ctl *wm.Controller
+	app    *application.App
+	ctl    *wm.Controller
 	animMu sync.Mutex
 	// suppressMove 程序性移动标记：GlideNote 动画期间 WindowDidMove 不记为用户
 	// 拖动。所有权属动画持有者（置位/结束清除），事件回调只读。主线程事件回调与
@@ -563,14 +586,15 @@ func (o *wailsOps) Hydrate(id string, rec model.NoteRecord, style model.NoteStyl
 		return
 	}
 	win.EmitEvent("note:hydrate", map[string]any{
-		"id":      id,
-		"content": rec.Content,
-		"pinned":  rec.Pinned,
-		"fixed":   rec.Fixed,
-		"slot":    rec.Slot,
-		"title":   rec.Title,
-		"style":   style,
-		"locked":  rec.Style != nil,
+		"id":       id,
+		"content":  rec.Content,
+		"pinned":   rec.Pinned,
+		"fixed":    rec.Fixed,
+		"slot":     rec.Slot,
+		"title":    rec.Title,
+		"style":    style,
+		"locked":   rec.Style != nil,
+		"todoCats": o.ctl.TodoCats(),
 	})
 	log.Printf("[hydrate] 已向 %s 推送生效样式 alpha=%v locked=%v", id, style.BgAlpha, rec.Style != nil)
 }
@@ -628,7 +652,7 @@ const (
 
 // GlideNote 弹开动画：步进 tween（easeOutCubic），全程抑制 WindowDidMove 记账；
 // 同窗口再次调用 close 旧取消信号取旧起新。锁只护 map 访问，SetPosition 在锁外
-//（持锁 InvokeSync 等主线程会死锁）。
+// （持锁 InvokeSync 等主线程会死锁）。
 func (o *wailsOps) GlideNote(id string, x, y, delayMs, ms int) {
 	o.animMu.Lock()
 	if done, ok := o.animDone[id]; ok {
@@ -746,6 +770,11 @@ func (o *wailsOps) Notify(title, body string) {
 	log.Printf("[notify] %s: %s", title, body)
 }
 
+// EmitDoneChanged 留痕数据变更广播（v4.0.0）：记事簿窗口订阅重拉。
+func (o *wailsOps) EmitDoneChanged() {
+	o.app.Event.Emit("done:changed")
+}
+
 func (o *wailsOps) PrimaryScreen() (float32, float32) {
 	return winutil.PrimaryScreenLogical()
 }
@@ -768,7 +797,7 @@ func configDir() string {
 }
 
 // underGoBuildTmp 判断目录是否位于系统临时目录下的 go-build* 内
-//（go 工具链 go run / go test 的临时构建产物所在）。
+// （go 工具链 go run / go test 的临时构建产物所在）。
 func underGoBuildTmp(dir string) bool {
 	tmp := os.TempDir()
 	if tmp == "" {

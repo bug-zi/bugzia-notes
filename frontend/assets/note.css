@@ -323,3 +323,147 @@ body {
   color: #9e1b32;
   border-color: rgba(255, 255, 255, 0.9);
 }
+
+/* ── 待办视图（v4.0.0）：便签底色上白字，白色系透明叠加 ── */
+.note-todos {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 100%;
+}
+.note-todos[hidden] {
+  display: none;
+}
+.todo-section {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+.todo-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 2px 1px;
+}
+.todo-head-name {
+  font-weight: 600;
+  opacity: 0.92;
+  user-select: none;
+}
+.todo-add {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+.todo-add:hover {
+  opacity: 1;
+}
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px;
+  border-radius: 6px;
+}
+.todo-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.todo-check {
+  flex: none;
+  margin-top: 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.85;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+}
+.todo-check:hover {
+  opacity: 1;
+}
+.todo-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+  white-space: pre-wrap;
+  cursor: text;
+}
+.todo-edit {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: inherit;
+  font: inherit;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+/* ── 分类管理（主便签设置面板，v4.0.0）：面板卡片内用中性灰叠加 ── */
+.note-catspanel {
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  margin-top: 8px;
+  padding-top: 6px;
+}
+.note-catspanel[hidden] {
+  display: none;
+}
+.note-cats-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.note-cat-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+.note-cat-row:hover {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 6px;
+}
+.note-cat-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-cat-rename {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: rgba(0, 0, 0, 0.06);
+  color: inherit;
+  font: inherit;
+  border-radius: 6px;
+  padding: 1px 4px;
+}
+.note-btn.mini {
+  padding: 1px 6px;
+  font-size: 12px;
+}
+.note-cat-fixed {
+  opacity: 0.65;
+  font-size: 12px;
+}
+.note-cat-add {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.note-cat-add input {
+  flex: 1;
+  min-width: 0;
+}

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>bugzia-notes 记事簿</title>
+<link rel="stylesheet" href="/assets/logbook.css">
+</head>
+<body>
+<div class="panel">
+  <h2>记事簿（已完成事项）</h2>
+  <div class="viewtoggle">
+    <button type="button" id="v-time" class="vbtn active">按时间</button>
+    <button type="button" id="v-cat" class="vbtn">按分类</button>
+  </div>
+  <div id="list" class="list"></div>
+  <p class="hint" id="empty-hint" hidden>还没有已完成的待办</p>
+  <p class="hint">打勾完成的待办在此留痕（不设上限），「还原」放回主便签；完成时间格式 261121-11:25。</p>
+</div>
+<script type="module" src="/assets/logbook-view.js"></script>
+</body>
+</html>

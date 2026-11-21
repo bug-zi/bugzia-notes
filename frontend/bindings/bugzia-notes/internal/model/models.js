@@ -7,6 +7,62 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * DoneEntry 留痕条目：主便签打勾完成的待办（v4.0.0，data\done.json）。
+ */
+export class DoneEntry {
+    /**
+     * Creates a new DoneEntry instance.
+     * @param {Partial<DoneEntry>} [$$source = {}] - The source object to create the DoneEntry.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * 随机串（还原按 id 定位，防位置竞态）
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("text" in $$source)) {
+            /**
+             * 待办文本
+             * @member
+             * @type {string}
+             */
+            this["text"] = "";
+        }
+        if (!("category" in $$source)) {
+            /**
+             * 完成时所属分类
+             * @member
+             * @type {string}
+             */
+            this["category"] = "";
+        }
+        if (!("done_at" in $$source)) {
+            /**
+             * 毫秒时间戳（排序键）
+             * @member
+             * @type {number}
+             */
+            this["done_at"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new DoneEntry instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {DoneEntry}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new DoneEntry(/** @type {Partial<DoneEntry>} */($$parsedSource));
+    }
+}
+
+/**
  * HotkeySettings 八条全局快捷键的键位描述（"alt+n" 形式）。
  * Create 为 v1 遗留字段：settings.json v1→v2 升级时继承给 Main，此后不再读写。
  */
@@ -383,6 +439,14 @@ export class Settings {
              */
             this["aux_colors"] = Array.from({ length: 5 }, () => (new NoteColor()));
         }
+        if (!("todo_categories" in $$source)) {
+            /**
+             * 主便签待办分类（v4.0.0）
+             * @member
+             * @type {string[]}
+             */
+            this["todo_categories"] = [];
+        }
 
         Object.assign(this, $$source);
     }
@@ -396,6 +460,7 @@ export class Settings {
         const $$createField0_0 = $$createType0;
         const $$createField1_0 = $$createType1;
         const $$createField2_0 = $$createType3;
+        const $$createField3_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("note" in $$parsedSource) {
             $$parsedSource["note"] = $$createField0_0($$parsedSource["note"]);
@@ -406,6 +471,9 @@ export class Settings {
         if ("aux_colors" in $$parsedSource) {
             $$parsedSource["aux_colors"] = $$createField2_0($$parsedSource["aux_colors"]);
         }
+        if ("todo_categories" in $$parsedSource) {
+            $$parsedSource["todo_categories"] = $$createField3_0($$parsedSource["todo_categories"]);
+        }
         return new Settings(/** @type {Partial<Settings>} */($$parsedSource));
     }
 }
@@ -415,3 +483,4 @@ const $$createType0 = NoteSettings.createFrom;
 const $$createType1 = HotkeySettings.createFrom;
 const $$createType2 = NoteColor.createFrom;
 const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = $Create.Array($Create.Any);
