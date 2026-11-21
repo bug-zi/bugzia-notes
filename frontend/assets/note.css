@@ -407,6 +407,13 @@ body {
   font: inherit;
   border-radius: 6px;
   padding: 2px 4px;
+  word-break: break-all;
+}
+/* 插入态编辑框是 .todo-section（纵向 flex）的直接子元素：.todo-edit 的
+   flex:1 在主轴（高度）上按 flex-basis:0% 分配，会压塌编辑框并使 JS 设的
+   高度失效——解除 flexing，让 syncTaHeight 的显式高度生效（v4.0.1） */
+.todo-section > .todo-edit {
+  flex: none;
 }
 
 /* ── 分类管理（主便签设置面板，v4.0.0）：面板卡片内用中性灰叠加 ── */

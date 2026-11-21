@@ -126,19 +126,28 @@ export function mountTodoView({ bodyEl, id, onContent }) {
      Enter 提交并在同位置继续录入（粘贴多行按行拆为多条）；空提交不产生条目；
      失焦提交。提交后本地重排 content 走 note:changed。 */
 
+  /* 高度自适应换行（与 note.js syncTextareaHeight 同款三轮收敛：滚动条
+     出现/消失会改变换行宽度，一轮测量可能偏小） */
   function syncTaHeight() {
     const ta = editing && editing.ta;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = ta.scrollHeight + "px";
+    let h = ta.scrollHeight;
+    for (let i = 0; i < 3; i++) {
+      ta.style.height = h + "px";
+      const again = ta.scrollHeight;
+      if (again === h) break;
+      h = again;
+    }
+    ta.style.height = h + "px";
   }
 
-  function bindTa(ta, taCommit) {
+  function bindTa(ta) {
     ta.addEventListener("input", syncTaHeight);
     ta.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.isComposing) {
         e.preventDefault();
-        taCommit(true);
+        taCommit();
       } else if (e.key === "Escape") {
         e.preventDefault();
         cancelEdit();
@@ -146,11 +155,14 @@ export function mountTodoView({ bodyEl, id, onContent }) {
       }
     });
     ta.addEventListener("blur", () => {
-      if (editing && editing.ta === ta) taCommit(false);
+      if (editing && editing.ta === ta) taCommit();
     });
   }
 
-  function taCommit(continueChain) {
+  /* Enter 提交即结束（v4.0.1：不再自动连续录入）；粘贴多行按行拆为多条；
+     编辑态空提交删条，插入态空提交不产生条目。提交后本地重排 content 走
+     note:changed。 */
+  function taCommit() {
     const ed = editing;
     if (!ed) return;
     editing = null; // 先清（防 remove 触发 blur 重入）
@@ -169,9 +181,6 @@ export function mountTodoView({ bodyEl, id, onContent }) {
       wails.Events.Emit("note:changed", { id, content: next });
     }
     rerender();
-    if (continueChain) {
-      startInsert(ed.cat, ed.idx + parts.length); // Enter 连续录入
-    }
   }
 
   function cancelEdit() {
@@ -180,7 +189,7 @@ export function mountTodoView({ bodyEl, id, onContent }) {
   }
 
   function startEdit(cat, idx) {
-    if (editing) taCommit(false);
+    if (editing) taCommit();
     const row = findRow(cat, idx);
     if (!row) return;
     const ta = document.createElement("textarea");
@@ -189,32 +198,32 @@ export function mountTodoView({ bodyEl, id, onContent }) {
     ta.rows = 1;
     row.querySelector(".todo-text").hidden = true;
     row.appendChild(ta);
-    editing = { cat, idx, mode: "edit", prev: ta.value, ta };
+    editing = { cat, idx, mode: "edit", ta };
     syncTaHeight();
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
-    bindTa(ta, taCommit);
+    bindTa(ta);
   }
 
   function startInsert(cat, idx) {
-    if (editing) taCommit(false);
+    if (editing) taCommit();
     const secEl = findSectionEl(cat);
     if (!secEl) return;
     const ta = document.createElement("textarea");
     ta.className = "todo-edit";
     ta.value = "";
     ta.rows = 1;
-    ta.placeholder = "输入待办，Enter 继续，空 Enter 结束";
+    ta.placeholder = "输入待办";
     const rows = secEl.querySelectorAll(".todo-item");
     if (idx < rows.length) {
       secEl.insertBefore(ta, rows[idx]);
     } else {
       secEl.appendChild(ta);
     }
-    editing = { cat, idx, mode: "insert", prev: "", ta };
+    editing = { cat, idx, mode: "insert", ta };
     syncTaHeight();
     ta.focus();
-    bindTa(ta, taCommit);
+    bindTa(ta);
   }
 
   /* 点分区尾部空白 = 给该分区加待办；点容器空白 = 给最后一个分区加 */
