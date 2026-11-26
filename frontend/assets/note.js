@@ -367,6 +367,10 @@ function startSegEdit(bidx, caret) {
   t.rows = 1;
   t.spellcheck = false;
   segEdit = { bidx, ta: t, isNew };
+  // swap 瞬间块高度塌缩（ta 尚未撑开），body 可滚动内容瞬时缩水，scrollTop
+  // 被钳制丢失——须在 swap 前捕获、sync 后恢复（旧全局编辑 startEdit 同款
+  // 教训；v4.2.1：内容多需滚动时点击进编辑会跳回顶部，光标看似回到文首）
+  const keep = bodyEl.scrollTop;
   const host = textEl.querySelector('[data-bidx="' + bidx + '"]');
   if (host) {
     host.textContent = "";
@@ -377,6 +381,7 @@ function startSegEdit(bidx, caret) {
   t.value = isNew ? "" : b.text;
   bindSegTa(t);
   syncTaHeight(t);
+  bodyEl.scrollTop = keep;
   t.focus({ preventScroll: true });
   const pos = Math.max(0, Math.min(caret ?? t.value.length, t.value.length));
   t.setSelectionRange(pos, pos);
