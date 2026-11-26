@@ -1914,6 +1914,90 @@ func TestConfirmDestroyGuardForMain(t *testing.T) {
 	}
 }
 
+// v4.3.0 退出清理：空辅助/自由便签静默销毁（关窗+移列表+不入回收站），
+// 主便签与有内容（含图片 token 行）便签保留，钉住/置顶/样式锁不豁免。
+func TestDestroyEmptyNotesOnExit(t *testing.T) {
+	ctl, ops := newTestController(t)
+	ctl.ToggleSlot(0)        // 主便签（空，永不销毁）
+	ctl.ToggleSlot(1)        // 辅助1：空 → 清
+	ctl.CreateOrSummonFree() // 自由A：空 → 清
+	ids := ctl.noteIDs()
+	var mainID, auxEmpty, freeEmpty string
+	for _, id := range ids {
+		rec, _ := ctl.recForTest(id)
+		switch {
+		case rec.Slot == model.SlotMain:
+			mainID = id
+		case rec.Slot == 1:
+			auxEmpty = id
+		default:
+			freeEmpty = id
+		}
+	}
+	mk := func(exclude map[string]bool) string {
+		for _, id := range ctl.noteIDs() {
+			if !exclude[id] {
+				return id
+			}
+		}
+		t.Fatal("新便签未创建")
+		return ""
+	}
+	ctl.CreateOrSummonFree() // 自由B：有文字 → 留
+	freeText := mk(map[string]bool{mainID: true, auxEmpty: true, freeEmpty: true})
+	ctl.SetContent(freeText, "有内容")
+	ctl.CreateOrSummonFree() // 自由C：仅空白行 → 清
+	freeBlank := mk(map[string]bool{mainID: true, auxEmpty: true, freeEmpty: true, freeText: true})
+	ctl.SetContent(freeBlank, "\n \n")
+	ctl.CreateOrSummonFree() // 自由D：图片 token 行 → 留
+	freePic := mk(map[string]bool{mainID: true, auxEmpty: true, freeEmpty: true, freeText: true, freeBlank: true})
+	ctl.SetContent(freePic, "![img](picture/20261126-223000-a1b2.png)")
+	ctl.CreateOrSummonFree() // 自由E：钉住+置顶+样式锁的空便签 → 照常清
+	freePinnedEmpty := mk(map[string]bool{mainID: true, auxEmpty: true, freeEmpty: true, freeText: true, freeBlank: true, freePic: true})
+	ctl.ToggleFixed(freePinnedEmpty)
+	ctl.TogglePinned(freePinnedEmpty)
+	if err := ctl.SetNoteStyleLock(freePinnedEmpty, true); err != nil {
+		t.Fatalf("锁定样式失败: %v", err)
+	}
+
+	n := ctl.DestroyEmptyNotes()
+
+	if n != 4 {
+		t.Fatalf("应清理 4 张空便签（辅1/自A/自C/自E）, 实际 %d", n)
+	}
+	for _, id := range []string{auxEmpty, freeEmpty, freeBlank, freePinnedEmpty} {
+		if ctl.hasNote(id) {
+			t.Fatalf("空便签 %s 应被销毁", id)
+		}
+		if !ops.closed[id] {
+			t.Fatalf("空便签 %s 应触发关窗", id)
+		}
+	}
+	for _, id := range []string{mainID, freeText, freePic} {
+		if !ctl.hasNote(id) {
+			t.Fatalf("%s 不应被销毁", id)
+		}
+	}
+	if len(ctl.store.RecycleEntries()) != 0 {
+		t.Fatal("空便签销毁不应入回收站")
+	}
+}
+
+// 全部非空：返回 0、列表不动。
+func TestDestroyEmptyNotesAllNonEmpty(t *testing.T) {
+	ctl, _ := newTestController(t)
+	ctl.ToggleSlot(0)
+	ids := ctl.noteIDs()
+	ctl.SetContent(ids[0], "待办内容")
+
+	if n := ctl.DestroyEmptyNotes(); n != 0 {
+		t.Fatalf("全部非空应返回 0, 实际 %d", n)
+	}
+	if ctl.Count() != 1 {
+		t.Fatalf("列表不应变化: %d", ctl.Count())
+	}
+}
+
 // 主便签默认标题「待办事项」（新建补建统一覆盖）；辅助/自由便签仍「便签n」。
 func TestCreateSlotNoteMainTitle(t *testing.T) {
 	ctl, _ := newTestController(t)

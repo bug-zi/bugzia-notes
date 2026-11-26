@@ -134,7 +134,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 退出清理（托盘「退出」或主循环结束后）
+	// 退出清理（托盘「退出」或主循环结束后；更新重启同路径）
+	// 空便签自动销毁（v4.3.0）：先于 st.Close()，scheduleSave 由 flush 落盘
+	if n := ctl.DestroyEmptyNotes(); n > 0 {
+		log.Printf("[exit] 已清理空便签 %d 张", n)
+	}
 	hotkeyMgr.Stop()
 	st.Close()
 }

@@ -896,6 +896,36 @@ func (c *Controller) ConfirmDestroy(id string) {
 	}
 }
 
+// DestroyEmptyNotes 退出时静默销毁全部空便签（v4.3.0）：辅助/自由便签
+// content 去空白后为空即销毁（主便签永不销毁；置顶/钉住/样式锁不豁免）。
+// 空便签不入回收站（与 ConfirmDestroy 非空入站语义一致）。返回清理张数。
+func (c *Controller) DestroyEmptyNotes() int {
+	c.mu.Lock()
+	empty := make([]string, 0, 4)
+	for i := range c.notes {
+		rec := c.notes[i].rec
+		if rec.Slot != model.SlotMain && strings.TrimSpace(rec.Content) == "" {
+			empty = append(empty, rec.ID)
+		}
+	}
+	for _, id := range empty {
+		c.notes = removeNote(c.notes, id)
+		delete(c.visible, id)
+		if c.activeID == id {
+			c.activeID = ""
+		}
+	}
+	c.mu.Unlock()
+
+	for _, id := range empty {
+		c.ops.CloseNote(id)
+	}
+	if len(empty) > 0 {
+		c.scheduleSave()
+	}
+	return len(empty)
+}
+
 // ── 待办留痕（v4.0.0）───────────────────────────────────────────────────
 
 // newDoneID 留痕条目随机 id（还原按 id 定位，避免位置序号竞态）。
