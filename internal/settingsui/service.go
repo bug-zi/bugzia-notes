@@ -16,7 +16,7 @@ import (
 )
 
 // Version 应用版本（设置窗口展示）。
-const Version = "v4.0.1"
+const Version = "v4.1.0"
 
 // Service 暴露给前端的服务（Wails 绑定）。
 type Service struct {
@@ -101,6 +101,11 @@ func (s *Service) ApplyHotkeys(hs model.HotkeySettings) map[string]any {
 // SetNoteStyleLock 锁定/解锁某张便签的独立样式（薄封装转发控制器）。
 func (s *Service) SetNoteStyleLock(id string, locked bool) error {
 	return s.ctl.SetNoteStyleLock(id, locked)
+}
+
+// SetMDRender 开关某张便签的 MD 渲染（薄封装转发控制器，v4.1.0）。
+func (s *Service) SetMDRender(id string, on bool) error {
+	return s.ctl.SetMDRender(id, on)
 }
 
 // ApplyNoteStyleFor 写入某张便签的独立样式（仅锁定态可写；值域 clamp 在控制器）。

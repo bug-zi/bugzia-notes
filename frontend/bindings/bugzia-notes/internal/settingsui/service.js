@@ -166,6 +166,16 @@ export function SetAutoStart(enable) {
 }
 
 /**
+ * SetMDRender 开关某张便签的 MD 渲染（薄封装转发控制器，v4.1.0）。
+ * @param {string} id
+ * @param {boolean} on
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetMDRender(id, on) {
+    return $Call.ByID(943477043, id, on);
+}
+
+/**
  * SetNoteStyleLock 锁定/解锁某张便签的独立样式（薄封装转发控制器）。
  * @param {string} id
  * @param {boolean} locked

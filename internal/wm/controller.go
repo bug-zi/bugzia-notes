@@ -704,6 +704,26 @@ func (c *Controller) ToggleFixed(id string) {
 	c.scheduleSave()
 }
 
+// SetMDRender MD 渲染开关（v4.1.0）：阅读态按 Markdown 富文本呈现。翻转标记 +
+// 刷 UpdatedAt（呈现方式变更视为编辑，同 ToggleFixed）→ hydrate 单窗重推 +
+// 防抖落盘。不拦主便签（入口在前端隐藏，控制器保持简单）。
+func (c *Controller) SetMDRender(id string, on bool) error {
+	c.mu.Lock()
+	n := c.findLocked(id)
+	if n == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("便签不存在: %s", id)
+	}
+	n.rec.MDRender = on
+	n.rec.UpdatedAt = time.Now().UnixMilli()
+	rec := n.rec
+	c.mu.Unlock()
+
+	c.ops.Hydrate(id, rec, EffectiveStyle(rec, c.store.Settings()))
+	c.scheduleSave()
+	return nil
+}
+
 // ── 便签样式（锁模型）──────────────────────────────────────────────────
 
 // SetNoteStyleLock 锁定/解锁便签样式。锁定 = 把当前生效样式快照写入

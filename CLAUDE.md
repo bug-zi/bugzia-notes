@@ -28,6 +28,8 @@ bugzia-notes — Windows 便签桌面应用（Go + Wails v3），把 Bugzia 桌�
 
 **v4.0.1（2026-11-22）：待办编辑体验优化（纯前端 note-todo.js/note.css）——添加框提示精简为「输入待办」；Enter 提交即结束（去掉自动连续录入与「空 Enter 结束」，编辑态空提交删条、插入态空提交不产生条目、粘贴多行仍拆条）；插入态编辑框修复纵向 flex 压塌（`.todo-section > .todo-edit { flex:none }`——`.todo-edit` 的 `flex:1` 在列布局主轴按 basis:0% 分配高度，JS 显式高度失效），`syncTaHeight` 改三轮收敛换行加高 + `word-break:break-all`，长文本编辑完整可见。** 零 Go 逻辑改动（仅 Version 常量）。
 
+**v4.1.0（2026-11-26）：便签局部设置新增 MD 渲染——辅助/自由便签「设置」面板（`.note-stylepanel`）新增「MD 渲染」开关（主便签不开放，待办视图与 MD 语义冲突）；开启后阅读态按 Markdown 富文本呈现（`frontend/assets/md.js` 手写迷你渲染器，零依赖），编辑与存储仍是 MD 源码（content 语义不变，关掉即回纯文本）；子集 = 标题/粗斜体/行内码/围栏代码块/列表（2 空格一层嵌套）/引用/链接/分隔线/硬换行，不支持表格/任务列表/图片/删除线；安全 = 整篇先 HTML 转义再打标记 + 链接 href 只放行 http(s)（Go 侧 `note:openlink` 事件复核前缀，`app.Browser.OpenURL` 系统浏览器打开）；`NoteRecord.MDRender`（notes.json v3 增量字段 `md_render`，零迁移，同 `fixed` 先例），`Controller.SetMDRender` 翻转 + 刷 UpdatedAt（同 ToggleFixed）+ hydrate 载荷带 `md_render` + 防抖落盘；服务 `Service.SetMDRender` 薄封装（同 `SetNoteStyleLock`）。** spec/plan 见 `docs/project/便签/archive/2026-11-26-v4.1.0-md-render-{design,plan}.md`（落地后归档）。
+
 ## 文档体系与维护权责（最重要）
 
 `docs/` 目录是开发者与 AI 共同维护的项目文档库（2026-11-17 搭建，旧 superpowers 文档已迁入），权责划分如下：
@@ -79,7 +81,7 @@ internal/importx/        bugzia 配置迁移（便签样式默认 + 便签三键
 internal/winutil/        Win32 工具：按标题查句柄（FindWindowW）、沉底 HWND_BOTTOM、任务栏隐藏 WS_EX_TOOLWINDOW、几何读取
 internal/settingsui/     设置服务（Wails 绑定：样式实时生效/快捷键重绑/迁移/更新检查/更新日志弹窗唤起/留痕 ListDone·RestoreDone/分类 ListTodoCategories·ApplyTodoCategories）
 internal/updater/        GitHub Releases 检查与自更新（releases.atom 检查 + latest/download 直链 + 替换脚本，内部更新器无第三方依赖）
-frontend/                便签窗口（note.html?id=，主便签 slot=0 走 note-todo.js 待办视图）、设置窗口（index.html）、回收站窗口（trash.html）、更新日志窗口（changelog.html）、记事簿窗口（logbook.html），原生 HTML/CSS/JS 无构建链
+frontend/                便签窗口（note.html?id=，主便签 slot=0 走 note-todo.js 待办视图，辅助/自由可开 md.js MD 渲染）、设置窗口（index.html）、回收站窗口（trash.html）、更新日志窗口（changelog.html）、记事簿窗口（logbook.html），原生 HTML/CSS/JS 无构建链
 frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手改，改服务后重新生成）
 ```
 
@@ -101,11 +103,12 @@ frontend/bindings/       wails3 generate bindings 生成的服务绑定（勿手
 - **主便签固定语义（v4.0.0）**：默认名 `model.MainNoteTitle`=「待办事项」（v4 迁移：store 读入时 `便签n` 样式自动改名、自定义名不动、历史未知「【名】」标题行自动补进配置；v1/v2/v3 三路径全覆盖，幂等）；**不可销毁三重拦截**：更多菜单对 slot=0 不渲染销毁项（`btnDestroy.hidden`）、`DestroyCurrent` 目标为主便签时 Notify「待办事项（主便签）不可销毁」不进确认态、`ConfirmDestroy` 兜底守卫（清确认态直接返回，不入回收站）；startRestore 补建主便签标题亦为「待办事项」
 - **记事簿（v4.0.0）**：托盘「记事簿」→ `openLogbook` 单例窗口（Name="logbook"，logbook.html + logbook-view.js）；数据经 `Service.ListDone/ListTodoCategories`（Call.ByName），视图切换「按时间（默认）/按分类」（按配置顺序分组、未分类最后、未知分类名归未分类组）；「还原」按钮 → `Service.RestoreDone`；实时刷新 = 订阅 `done:changed`（`wailsOps.EmitDoneChanged` 全局广播）+ 页面可见时重拉
 - **自由便签（v2.1.0）**：`NoteRecord.Slot = model.SlotFree(-1)`，与槽位便签同列表同存储；无专属显隐键（静默启动恢复的靠新建键召唤，其余常显）；未锁定样式 = 全局默认（玫红）
+- **MD 渲染（v4.1.0）**：`NoteRecord.MDRender` 标记——开启后阅读态 `render()` 分流 `textEl.innerHTML = mdRender(content)`（`frontend/assets/md.js` 迷你渲染器：**整篇先 HTML 转义再打标记**，`<script>` 天然变纯文本；链接 href 只放行 http/https）；**content 永远存 MD 源码**，编辑链路零改动（点正文进 textarea 编辑源码，富文本 DOM 与源码无下标映射、`caretIndexAtClick` 回退文末），关掉开关即回纯文本原样；渲染态 `<a>` 点击拦截导航发 `note:openlink {id,url}` → main `app.Browser.OpenURL`（Go 侧复核 http/https 前缀）；复制按钮仍复制源码；面板开关仅 slot≠0 显示（`mdRowEl.hidden`）、与样式锁独立；事件链 `Call.ByName SetMDRender` → `Controller.SetMDRender`（刷 UpdatedAt 同 ToggleFixed）→ hydrate 重推（载荷带 `md_render`）+ 防抖落盘；`.note-text.md` 样式白色系半透明、`white-space:normal`（`<pre>` 自带 UA pre 不受影响）
 - **总量上限 20（v2.1.0，`model.MaxNotes`）**：槽位便签 + 自由便签共享；`model.SlotCount=6` 只表达槽位数（`ToggleSlot` 越界、`ImportRecords` 上限用 SlotCount）
 - **便签标题（v2.1.0）**：`NoteRecord.Title`，默认「便签n」（n 从创建后总数起试，重名顺延；`model.NextDefaultTitle`）；显示在便签头部「设置」左侧，双击行内编辑（Enter/失焦提交、Esc 还原、rune 截 30、空白不覆盖），走 `note:renamed` 事件 → `Controller.SetTitle` → 单窗重推 + 防抖落盘；Win32 窗口 Title 仍 = id 不变
 - **6 槽位模型（2026-11-18，1 主 + 5 辅固定槽位、六键统一切换、辅助五色）**：`NoteRecord.Slot`（0=主便签，1~5=辅助便签，`model.SlotCount=6` 每槽至多一张）；六键统一切换式 `Controller.ToggleSlot(slot)`——槽位无便签→创建（即钉住、装箱定位）并显示聚焦成为当前便签，隐藏→显示聚焦，已显示→隐藏；启动恢复（`startRestore`）时无 Slot=0 记录自动补建主便签（全新安装/销毁后重启统一覆盖）；v2.1.0 起槽位之外另有自由便签（见上；集合切换入口 `ToggleMainSet` 亦含补建，见上）
 - 辅助便签底色 = 槽位色设置（`Settings.AuxColors [5]NoteColor`，默认五色与玫红同源：雾蓝 #5A7FA8 / 苔绿 #5E8656 / 藤紫 #8B6FA8 / 琥珀 #A0743A / 青灰 #3F8680，设置窗口取色器可改，实时生效）；**v2.1.0 起样式锁对所有便签开放**（`EffectiveStyle` 优先级不变：锁 > 槽位色 > 全局；辅助锁定后独立于槽位色，解锁回槽位色；自由便签未锁=全局默认）；「已钉住」「已置顶」按钮字色 = 辅助或已锁定便签的生效底色（前端 `--note-pin-ink`，note.js 注水注入；主/自由未锁回落深红 #9e1b32）
-- notes.json 为 v3 形状（version 字段判定）：notes v3 记录带 `slot` + `title` + `fixed`（v3.3.0 增量可选字段，缺省 false、零迁移零重写）；主便签 content 语义 v4.0.0 起为待办行（见「待办留痕」条，形状不变）；v2 读时自动补默认标题并**就地重写 v3**（纯增量迁移，不备份改名，幂等），v4 迁移（主便签改名/分类补配置）紧随其后；v1 读时自动迁移（幂等）：取 `UpdatedAt` 最新一张→主便签（补标题）、其余不加载，原文件改名 `notes.json.bak-*` 留存，v4 迁移同随后。settings.json 为 v2 形状：键位含 `main`（语义 v2.1.0 起为新建自由便签，字段名不变）/`aux1`~`aux5` + `aux_colors` + `todo_categories`（v4.0.0 增量，缺省回退默认五类）；v1 迁移规则不变（`create` 键继承给 `main`、辅助键与五色填默认）；v2 完全信任文件值（留空=禁用不再补默认）
+- notes.json 为 v3 形状（version 字段判定）：notes v3 记录带 `slot` + `title` + `fixed`（v3.3.0 增量可选字段，缺省 false、零迁移零重写）+ `md_render`（v4.1.0 增量可选字段，同 `fixed` 先例）；主便签 content 语义 v4.0.0 起为待办行（见「待办留痕」条，形状不变）；v2 读时自动补默认标题并**就地重写 v3**（纯增量迁移，不备份改名，幂等），v4 迁移（主便签改名/分类补配置）紧随其后；v1 读时自动迁移（幂等）：取 `UpdatedAt` 最新一张→主便签（补标题）、其余不加载，原文件改名 `notes.json.bak-*` 留存，v4 迁移同随后。settings.json 为 v2 形状：键位含 `main`（语义 v2.1.0 起为新建自由便签，字段名不变）/`aux1`~`aux5` + `aux_colors` + `todo_categories`（v4.0.0 增量，缺省回退默认五类）；v1 迁移规则不变（`create` 键继承给 `main`、辅助键与五色填默认）；v2 完全信任文件值（留空=禁用不再补默认）
 - 数据目录 = exe 同目录 `data\`（便携式，不占 C 盘；`go run` 时 exe 在 Go 临时构建目录，回退用工作目录 `data\`）；首启自动把旧版 `%APPDATA%\bugzia-notes\` 的 notes.json/settings.json 迁移过来并清理旧目录（`migrateLegacyData`）；与 bugzia 数据互不读写，只提供一次性迁移：置顶便签 + 便签样式 + 便签三键（bugzia 的 note_create→主便签键；summon 不迁移）；本应用无 settings.json 且检测到 bugzia 配置时首启自动迁移
 - 全局快捷键八键（默认 `alt+n` 便签集合切换（v2.2.0 起 `ToggleMainSet`）/ `alt+c` 新建便签（用户配置常为 alt+shift+c）/ `alt+z` 销毁当前（v4.0.0 起目标为主便签时拦截并提示「待办事项（主便签）不可销毁」）/ `alt+1`~`alt+5` 辅助 1~5；`hotkey.IDToggle/IDMain/IDKill/IDAux1..5`；`IDMain` 语义 v2.1.0 起为新建自由便签、`IDToggle` v2.2.0 起 Label「便签集合切换」（冲突报告用））；销毁当前 = 最近新建/编辑那张，回退列表最后一张，带 Y/N 确认；逐键注册、被占用键跳过并在设置窗口报告
 - 托盘常驻，菜单「回收站 / 记事簿 / 设置 / 退出」（v2.2.0 移除「召唤主便签」，其职责由集合切换键承接；v4.0.0 增「记事簿」openLogbook 单例窗口）；关闭全部便签窗口应用不退出（Wails 托盘模式，spike 已验证），托盘「退出」才真正结束；单实例用命名 mutex（`internal/instance`）

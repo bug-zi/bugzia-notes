@@ -376,6 +376,15 @@ func wireNoteEvents(app *application.App, ctl *wm.Controller) {
 			ctl.CheckTodo(id, evStr(m, "category"), evStr(m, "text"))
 		}
 	})
+	on("note:openlink", func(m map[string]any) {
+		url := evStr(m, "url")
+		// 渲染器已只放行 http/https，Go 侧复核前缀（纵深防御）
+		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+			if err := app.Browser.OpenURL(url); err != nil {
+				log.Printf("[openlink] 打开失败: %v", err)
+			}
+		}
+	})
 }
 
 func evStr(m map[string]any, key string) string {
@@ -586,15 +595,16 @@ func (o *wailsOps) Hydrate(id string, rec model.NoteRecord, style model.NoteStyl
 		return
 	}
 	win.EmitEvent("note:hydrate", map[string]any{
-		"id":       id,
-		"content":  rec.Content,
-		"pinned":   rec.Pinned,
-		"fixed":    rec.Fixed,
-		"slot":     rec.Slot,
-		"title":    rec.Title,
-		"style":    style,
-		"locked":   rec.Style != nil,
-		"todoCats": o.ctl.TodoCats(),
+		"id":        id,
+		"content":   rec.Content,
+		"pinned":    rec.Pinned,
+		"fixed":     rec.Fixed,
+		"md_render": rec.MDRender,
+		"slot":      rec.Slot,
+		"title":     rec.Title,
+		"style":     style,
+		"locked":    rec.Style != nil,
+		"todoCats":  o.ctl.TodoCats(),
 	})
 	log.Printf("[hydrate] 已向 %s 推送生效样式 alpha=%v locked=%v", id, style.BgAlpha, rec.Style != nil)
 }

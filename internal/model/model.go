@@ -43,9 +43,10 @@ type NoteRecord struct {
 	Y         int        `json:"y"`
 	W         int        `json:"w"`
 	H         int        `json:"h"`
-	Pinned    bool       `json:"pinned"` // 置顶：保持最上层（v3.3.0 前称「钉住」）
-	Fixed     bool       `json:"fixed"`  // 钉住：不受其他便签挤压推动（仍可拖动/缩放）
-	Slot      int        `json:"slot"`   // 0=主便签（SlotMain），1~5=辅助便签
+	Pinned    bool       `json:"pinned"`    // 置顶：保持最上层（v3.3.0 前称「钉住」）
+	Fixed     bool       `json:"fixed"`     // 钉住：不受其他便签挤压推动（仍可拖动/缩放）
+	MDRender  bool       `json:"md_render"` // MD 渲染：阅读态按 Markdown 富文本呈现（v4.1.0）
+	Slot      int        `json:"slot"`      // 0=主便签（SlotMain），1~5=辅助便签
 	CreatedAt int64      `json:"created_at"`
 	UpdatedAt int64      `json:"updated_at"`
 	Style     *NoteStyle `json:"style"`

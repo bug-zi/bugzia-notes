@@ -355,6 +355,33 @@ func TestLoadNotesV3WithoutFixedKey(t *testing.T) {
 	}
 }
 
+// v3 记录 round-trip：MDRender 字段持久化保留（MD 渲染，v4.1.0）。
+func TestNotesRoundTripKeepsMDRender(t *testing.T) {
+	s := newTestStore(t)
+	recMD := rec("md", true)
+	recMD.MDRender = true
+	if err := s.SaveNotesNow([]model.NoteRecord{recMD}); err != nil {
+		t.Fatal(err)
+	}
+	got := s.LoadNotes()
+	if len(got) != 1 || !got[0].MDRender {
+		t.Fatalf("md_render 字段应持久化: %+v", got)
+	}
+}
+
+// 旧版写入的 v3 文件没有 md_render 键：读入为 false，不迁移不报错。
+func TestLoadNotesV3WithoutMDRenderKey(t *testing.T) {
+	s := newTestStore(t)
+	body := `{"version":3,"notes":[{"id":"n1","content":"","title":"便签1","x":-1,"y":-1,"w":240,"h":220,"pinned":true,"slot":1,"created_at":1,"updated_at":1,"style":null}]}`
+	if err := os.WriteFile(s.NotesPath(), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := s.LoadNotes()
+	if len(got) != 1 || got[0].MDRender {
+		t.Fatalf("缺 md_render 键应读为 false: %+v", got)
+	}
+}
+
 // done.json round-trip：头插保序（新到旧）、无上限不裁剪、重开仍在。
 func TestDoneRoundTripNewestFirstNoCap(t *testing.T) {
 	dir := t.TempDir()

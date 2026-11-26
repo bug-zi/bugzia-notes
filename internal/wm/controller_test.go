@@ -30,6 +30,7 @@ type fakeOps struct {
 	notify         []string
 	hydrates       []string
 	hydratedStyles []model.NoteStyle
+	hydratedMD     map[string]bool // hydrate 载荷的 rec.MDRender（v4.1.0）
 	pins           map[string]bool
 	fixes          map[string]bool
 	confirms       []string
@@ -39,10 +40,11 @@ type fakeOps struct {
 
 func newFakeOps() *fakeOps {
 	return &fakeOps{
-		hidden: map[string]bool{},
-		closed: map[string]bool{},
-		pins:   map[string]bool{},
-		fixes:  map[string]bool{},
+		hidden:     map[string]bool{},
+		closed:     map[string]bool{},
+		pins:       map[string]bool{},
+		fixes:      map[string]bool{},
+		hydratedMD: map[string]bool{},
 	}
 }
 
@@ -54,6 +56,7 @@ func (f *fakeOps) CreateNoteWindow(rec model.NoteRecord, x, y, w, h int, hidden 
 func (f *fakeOps) Hydrate(id string, rec model.NoteRecord, style model.NoteStyle) {
 	f.hydrates = append(f.hydrates, id)
 	f.hydratedStyles = append(f.hydratedStyles, style)
+	f.hydratedMD[id] = rec.MDRender
 }
 
 func (f *fakeOps) RequestDestroyConfirm(id string) { f.confirms = append(f.confirms, id) }
@@ -1515,6 +1518,38 @@ func TestToggleFixed(t *testing.T) {
 	ctl.ToggleFixed(id)
 	if r := recByID(t, ctl, id); r.Fixed {
 		t.Fatal("再次 ToggleFixed 应回 false")
+	}
+}
+
+// SetMDRender 翻转 + 刷 UpdatedAt + hydrate 重推（MD 渲染，v4.1.0）。
+func TestSetMDRender(t *testing.T) {
+	a := model.NewRecord("", 240, 220, true)
+	a.Slot = 1
+	a.UpdatedAt = 12345 // 预置旧时间戳：NewRecord 与断言同毫秒会撞值
+	ctl, ops := newTestController(t, a)
+	id := ctl.noteIDs()[0]
+	before := updatedAtForTest(ctl, id)
+
+	ctl.SetMDRender(id, true)
+	if r := recByID(t, ctl, id); !r.MDRender {
+		t.Fatal("SetMDRender(true) 后应 md_render=true")
+	}
+	if !ops.hydratedMD[id] {
+		t.Fatal("应 hydrate 重推且载荷带 md_render=true")
+	}
+	if updatedAtForTest(ctl, id) == before {
+		t.Fatal("应刷 UpdatedAt（呈现方式变更视为编辑，同 ToggleFixed）")
+	}
+	ctl.SetMDRender(id, false)
+	if r := recByID(t, ctl, id); r.MDRender {
+		t.Fatal("SetMDRender(false) 应回 false")
+	}
+}
+
+func TestSetMDRenderUnknownID(t *testing.T) {
+	ctl, _ := newTestController(t)
+	if err := ctl.SetMDRender("nope", true); err == nil {
+		t.Fatal("未知 id 应报错")
 	}
 }
 

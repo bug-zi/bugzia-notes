@@ -4,6 +4,7 @@
 
 import * as wails from "/wails/runtime.js";
 import { mountTodoView } from "/assets/note-todo.js";
+import { mdRender } from "/assets/md.js";
 
 const params = new URLSearchParams(location.search);
 const id = params.get("id") || "";
@@ -34,6 +35,8 @@ const spFields = {
 };
 const spBgColor = document.getElementById("bg-color");
 const catspanelEl = document.getElementById("catspanel");
+const mdRowEl = document.getElementById("md-row");
+const mdCheck = document.getElementById("md-render");
 const catListEl = document.getElementById("cat-list");
 const catNewEl = document.getElementById("cat-new");
 const btnCatAdd = document.getElementById("btn-cat-add");
@@ -55,6 +58,7 @@ let confirming = false;
 let draft = "";
 let destroySent = false;
 let locked = false;     // rec.Style != nil（Go 侧 hydrate 载荷带 locked）
+let mdOn = false;       // MD 渲染：阅读态富文本（v4.1.0，hydrate 载荷带 md_render）
 let panelOpen = false;
 let curStyle = null;    // 最近一次生效样式（面板打开时回填表单）
 let applying = false;   // 防重入
@@ -73,7 +77,7 @@ wails.Events.On("note:hydrate", (ev) => {
   if (!data || data.id !== id) return; // 只认发给自己的（防串台）
   slot = data.slot ?? 0;
   applyTitle(data.title ?? "");
-  applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked, !!data.fixed, data.todoCats ?? null);
+  applyContent(data.content ?? "", !!data.pinned, data.style, !!data.locked, !!data.fixed, !!data.md_render, data.todoCats ?? null);
 });
 
 wails.Events.On("note:destroy-confirm", (ev) => {
@@ -100,11 +104,12 @@ wails.Events.On("note:fixed-sync", (ev) => {
 // 挂载即向 Go 请求注水
 wails.Events.Emit("note:ready", { id });
 
-function applyContent(next, nextPinned, settings, nextLocked, nextFixed, todoCats) {
+function applyContent(next, nextPinned, settings, nextLocked, nextFixed, nextMD, todoCats) {
   content = next ?? "";
   pinned = !!nextPinned;
   fixed = !!nextFixed;
   locked = !!nextLocked;
+  mdOn = !!nextMD;
   curStyle = settings ?? null;
   if (Array.isArray(todoCats) && todoCats.length > 0) cats = todoCats;
   applyStyle(settings);
@@ -128,7 +133,7 @@ function applyContent(next, nextPinned, settings, nextLocked, nextFixed, todoCat
       focusEditor("start");
     }
   }
-  if (panelOpen) syncLockUI(); // 面板开着时跟随重推刷新（锁关=全局被改）
+  if (panelOpen) { syncLockUI(); syncMDUI(); } // 面板开着时跟随重推刷新（锁关=全局被改）
 }
 
 function applyTitle(next) {
@@ -214,7 +219,9 @@ function applyStyle(s) {
 
 function render() {
   if (editing) return;
-  textEl.textContent = content;
+  textEl.classList.toggle("md", mdOn);
+  if (mdOn) textEl.innerHTML = mdRender(content);
+  else textEl.textContent = content;
 }
 
 /* ── 编辑态 ───────────────────────────────────────────────────────── */
@@ -266,8 +273,14 @@ bodyEl.addEventListener("click", (e) => {
     return;
   }
   if (slot === 0) return; // 待办视图点击语义在 note-todo.js（v4.0.0）
+  const link = e.target.closest && e.target.closest("a");
+  if (link && mdOn && !editing && !confirming) {
+    e.preventDefault(); // 便签窗口不导航，转发系统浏览器打开（v4.1.0）
+    wails.Events.Emit("note:openlink", { id, url: link.getAttribute("href") });
+    return;
+  }
   if (!editing && !confirming) {
-    const pos = caretIndexAtClick(e);
+    const pos = mdOn ? null : caretIndexAtClick(e); // 富文本 DOM 与源码无下标映射，回退文末
     startEdit();
     focusEditorAt(pos);
   }
@@ -396,12 +409,14 @@ function openPanel() {
   panelOpen = true;
   stylepanelEl.hidden = false;
   catspanelEl.hidden = slot !== 0; // 分类管理仅主便签（v4.0.0）
+  mdRowEl.hidden = slot === 0; // MD 渲染仅辅助/自由便签（v4.1.0，主便签待办视图不开放）
   if (slot === 0) {
     catMsgEl.textContent = "";
     mergingCat = null;
     renderCatList();
   }
   syncLockUI();
+  syncMDUI();
 }
 
 function closePanel() {
@@ -512,6 +527,20 @@ btnStyleLock.addEventListener("click", async () => {
     // 成功后 Go 会单窗重推（含 locked 标志），UI 状态经 hydrate 回填
     await wails.Call.ByName(NS + "SetNoteStyleLock", id, !locked);
   } catch (err) {
+    spMsg.textContent = String(err);
+  }
+});
+
+function syncMDUI() {
+  mdCheck.checked = mdOn;
+}
+
+mdCheck.addEventListener("click", async () => {
+  try {
+    // 成功后 Go 单窗重推（载荷带 md_render），状态经 hydrate 回填
+    await wails.Call.ByName(NS + "SetMDRender", id, mdCheck.checked);
+  } catch (err) {
+    mdCheck.checked = mdOn; // 失败回弹
     spMsg.textContent = String(err);
   }
 });
