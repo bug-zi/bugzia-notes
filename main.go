@@ -11,6 +11,7 @@ import (
 	"image/png"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,9 @@ func main() {
 		log.Fatalf("初始化存储失败: %v", err)
 	}
 
+	picDir := pictureDir()
+	gcPictures(picDir, st) // 启动 GC：无引用图片即删（v4.2.0，窗口恢复前执行）
+
 	hotkeyMgr := &hotkey.Manager{}
 	ops := &wailsOps{suppressMove: map[string]bool{}, animDone: map[string]chan struct{}{}, dragSessions: map[string]chan struct{}{}}
 	ctl := wm.NewController(ops, st)
@@ -63,13 +67,13 @@ func main() {
 		Current:   settingsui.Version,
 	}
 
-	svc := settingsui.NewService(st, ctl, hotkeyMgr, hotkeyFire)
+	svc := settingsui.NewService(st, ctl, hotkeyMgr, hotkeyFire, picDir)
 
 	app := application.New(application.Options{
 		Name: "bugzia-notes",
 		Icon: appIconBytes(), // 应用/窗口/任务栏图标（程序化生成，不引二进制资源）
 		Assets: application.AssetOptions{
-			Handler: application.BundledAssetFileServer(assets),
+			Handler: pictureHandler(picDir, application.BundledAssetFileServer(assets)),
 		},
 		Services: []application.Service{
 			application.NewService(svc),
@@ -95,7 +99,7 @@ func main() {
 	}
 
 	initTray(app)
-	wireNoteEvents(app, ctl)
+	wireNoteEvents(app, ctl, picDir)
 
 	// 自启动条目自愈：exe 被挪动后把 Run 值整串重写为当前路径
 	//（失败仅记日志，不阻塞启动；spec §7）
@@ -144,6 +148,19 @@ func launchSilent(args []string) bool {
 		}
 	}
 	return false
+}
+
+// gcPictures 启动时清理 picture 目录中无引用的图片文件（便签+回收站均不引用，
+// v4.2.0 spec §6）。失败仅记日志，不阻塞启动。
+func gcPictures(dir string, st *store.Store) {
+	removed, err := store.GCPictures(dir, store.ReferencedPictures(st))
+	if err != nil {
+		log.Printf("[gc] 图片清理失败: %v", err)
+		return
+	}
+	if removed > 0 {
+		log.Printf("[gc] 已清理无引用图片 %d 个", removed)
+	}
 }
 
 func dispatchHotkey(ctl *wm.Controller, id int) {
@@ -323,7 +340,7 @@ func cornerClamp(v float64, size int, r float64) float64 {
 }
 
 // wireNoteEvents 便签窗口前端事件 → 控制器（所有载荷带 id，控制器只认自己的）。
-func wireNoteEvents(app *application.App, ctl *wm.Controller) {
+func wireNoteEvents(app *application.App, ctl *wm.Controller, picDir string) {
 	on := func(name string, fn func(m map[string]any)) {
 		app.Event.On(name, func(e *application.CustomEvent) {
 			log.Printf("[event] %s sender=%s", name, e.Sender)
@@ -385,6 +402,20 @@ func wireNoteEvents(app *application.App, ctl *wm.Controller) {
 			}
 		}
 	})
+	on("note:openimage", func(m map[string]any) {
+		name := evStr(m, "name")
+		// 前端只对严格格式 token 渲染 <img>，Go 侧复核（纵深防御，同 note:openlink）
+		if !store.IsPictureName(name) {
+			return
+		}
+		p := filepath.Join(picDir, name)
+		if _, err := os.Stat(p); err != nil {
+			return
+		}
+		if err := app.Browser.OpenFile(p); err != nil {
+			log.Printf("[openimage] 打开失败: %v", err)
+		}
+	})
 }
 
 func evStr(m map[string]any, key string) string {
@@ -393,6 +424,27 @@ func evStr(m map[string]any, key string) string {
 	}
 	s, _ := m[key].(string)
 	return s
+}
+
+// pictureHandler 拦截 /picture/<名> 请求从磁盘读图返回（v4.2.0 方案 A）。
+// 严格文件名校验防路径穿越（宽松白名单会放行「..」）；图片路径但不合法或
+// 不存在直接 404，不落入内嵌资产；其余请求原样转发。
+func pictureHandler(dir string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/picture/") {
+			name := strings.TrimPrefix(r.URL.Path, "/picture/")
+			if store.IsPictureName(name) {
+				p := filepath.Join(dir, name)
+				if _, err := os.Stat(p); err == nil {
+					http.ServeFile(w, r, p)
+					return
+				}
+			}
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // updateFlow 更新检查主流程（spec §5 状态机）。manual=false 时除「有新版弹框」
@@ -789,10 +841,10 @@ func (o *wailsOps) PrimaryScreen() (float32, float32) {
 	return winutil.PrimaryScreenLogical()
 }
 
-// configDir 数据目录：exe 同目录的 data\（便携式，数据不占 C 盘）。
-// go run / go test 时 exe 在 Go 工具链临时构建目录里，此时回退用工作目录
-// 的 data\，使开发运行与正式运行共用项目内同一份数据。
-func configDir() string {
+// appRelDir exe 同目录下的应用子目录（data=数据 / picture=粘贴图片，v4.2.0）。
+// go run / go test 时 exe 在 Go 工具链临时构建目录里，此时回退用工作目录，
+// 使开发运行与正式运行共用项目内同一份数据。
+func appRelDir(name string) string {
 	exe, err := os.Executable()
 	if err != nil {
 		log.Fatalf("无法确定可执行文件路径: %v", err)
@@ -800,11 +852,15 @@ func configDir() string {
 	exeDir := filepath.Dir(exe)
 	if underGoBuildTmp(exeDir) {
 		if wd, werr := os.Getwd(); werr == nil {
-			return filepath.Join(wd, "data")
+			return filepath.Join(wd, name)
 		}
 	}
-	return filepath.Join(exeDir, "data")
+	return filepath.Join(exeDir, name)
 }
+
+func configDir() string { return appRelDir("data") }
+
+func pictureDir() string { return appRelDir("picture") }
 
 // underGoBuildTmp 判断目录是否位于系统临时目录下的 go-build* 内
 // （go 工具链 go run / go test 的临时构建产物所在）。

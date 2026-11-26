@@ -156,6 +156,18 @@ export function RestoreDone(id) {
 }
 
 /**
+ * SavePicture 保存粘贴的图片到 picture 目录（v4.2.0），返回生成的文件名
+ * （前端据此插入 ![img](picture/<名>) token）。失败经 Notify 通道提示
+ * （现为日志）并返回错误。
+ * @param {string} ext
+ * @param {string} b64
+ * @returns {$CancellablePromise<string>}
+ */
+export function SavePicture(ext, b64) {
+    return $Call.ByID(3612279011, ext, b64);
+}
+
+/**
  * SetAutoStart 开关开机自启动：开启以当前 exe 路径写入 Run 值，
  * 关闭删除 Run 值。失败原样返回错误（前端行内报错 + 开关回弹）。
  * @param {boolean} enable

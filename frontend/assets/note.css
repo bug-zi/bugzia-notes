@@ -177,15 +177,13 @@ body {
   opacity: 0.75;
 }
 
-.note-textarea {
-  /* 块级化：textarea 默认 inline 布局，基线下方的 descender 空隙会让它比
-     .note-text 高几像素，切换态时内容高度不一致引发显示跳动 */
+/* 段就地编辑框（v4.2.0 图片常显改造，替代原全局 .note-textarea）：
+   块级化 + 清 UA padding，与 .note-text 度量对齐（内容高、换行宽度一致），
+   弹入/收起时不引发显示跳动 */
+.note-segta {
   display: block;
   width: 100%;
-  min-height: 100%;
   box-sizing: border-box;
-  /* 清掉 UA 默认 padding（2px）：与 .note-text 度量完全对齐（内容高、
-     换行宽度一致），否则阅读态/编辑态切换时内容高度变化会引发显示跳动 */
   padding: 0;
   resize: none;
   border: none;
@@ -198,12 +196,6 @@ body {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-/* display:block 会覆盖 hidden 属性的 UA display:none（同 .note-confirm 的
-   教训），必须显式压回，否则编辑框常驻占位 */
-.note-textarea[hidden] {
-  display: none;
 }
 
 /* 销毁确认浮层（hidden 属性控制显隐——必须显式声明，否则下面的
@@ -532,4 +524,49 @@ body {
 .note-cat-add input {
   flex: 1;
   min-width: 0;
+}
+
+/* v4.2.0 图片粘贴：正文内缩略图（两种状态恒显）+ 悬停删除 + 缺失占位 */
+.note-imgwrap {
+  position: relative;
+  /* 收缩到图片实际宽度：× 绝对定位锚的是包装层右上角，块级默认撑满整列
+     会让 × 跑到列右上而非图片右上（调小尺寸后尤其明显） */
+  width: fit-content;
+}
+.note-img {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
+  cursor: pointer;
+  margin: 4px 0;
+}
+.note-img:hover {
+  outline: 1px solid rgba(255, 255, 255, 0.45);
+}
+.note-img-del {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+}
+.note-imgwrap:hover .note-img-del {
+  display: flex;
+}
+.note-img-del:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+.note-img-missing {
+  opacity: 0.75;
+  font-size: 0.9em;
+  margin: 4px 0;
 }

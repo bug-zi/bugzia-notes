@@ -16,21 +16,22 @@ import (
 )
 
 // Version 应用版本（设置窗口展示）。
-const Version = "v4.1.0"
+const Version = "v4.2.0"
 
 // Service 暴露给前端的服务（Wails 绑定）。
 type Service struct {
-	st    *store.Store
-	ctl   *wm.Controller
-	mgr   *hotkey.Manager
-	fire  func(id int) // 热键触发回调（main 注入，内含主线程调度）
-	check func(manual bool) map[string]any // 更新检查回调（main 注入，含弹框与重启流程）
-	open  func() // 打开更新日志窗口回调（main 注入，单例窗口）
+	st     *store.Store
+	ctl    *wm.Controller
+	mgr    *hotkey.Manager
+	fire   func(id int) // 热键触发回调（main 注入，内含主线程调度）
+	check  func(manual bool) map[string]any // 更新检查回调（main 注入，含弹框与重启流程）
+	open   func() // 打开更新日志窗口回调（main 注入，单例窗口）
+	picDir string // 粘贴图片目录（main 注入，v4.2.0）
 }
 
-// NewService 构建设置服务。
-func NewService(st *store.Store, ctl *wm.Controller, mgr *hotkey.Manager, fire func(id int)) *Service {
-	return &Service{st: st, ctl: ctl, mgr: mgr, fire: fire}
+// NewService 构建设置服务。picDir 为粘贴图片目录（v4.2.0）。
+func NewService(st *store.Store, ctl *wm.Controller, mgr *hotkey.Manager, fire func(id int), picDir string) *Service {
+	return &Service{st: st, ctl: ctl, mgr: mgr, fire: fire, picDir: picDir}
 }
 
 // GetSettings 读取当前设置（样式默认 + 键位）。
@@ -106,6 +107,20 @@ func (s *Service) SetNoteStyleLock(id string, locked bool) error {
 // SetMDRender 开关某张便签的 MD 渲染（薄封装转发控制器，v4.1.0）。
 func (s *Service) SetMDRender(id string, on bool) error {
 	return s.ctl.SetMDRender(id, on)
+}
+
+// SavePicture 保存粘贴的图片到 picture 目录（v4.2.0），返回生成的文件名
+// （前端据此插入 ![img](picture/<名>) token）。失败经 Notify 通道提示
+// （现为日志）并返回错误。
+func (s *Service) SavePicture(ext, b64 string) (string, error) {
+	name, err := store.SavePicture(s.picDir, ext, b64)
+	if err != nil {
+		log.Printf("[image] 保存失败: %v", err)
+		s.ctl.Notify("bugzia-notes", "图片保存失败："+err.Error())
+		return "", err
+	}
+	log.Printf("[image] 已保存 %s", name)
+	return name, nil
 }
 
 // ApplyNoteStyleFor 写入某张便签的独立样式（仅锁定态可写；值域 clamp 在控制器）。

@@ -11,7 +11,6 @@ const id = params.get("id") || "";
 
 const root = document.getElementById("root");
 const textEl = document.getElementById("text");
-const ta = document.getElementById("ta");
 const bodyEl = document.getElementById("body");
 const btnPin = document.getElementById("btn-pin");
 const btnFix = document.getElementById("btn-fix");
@@ -53,9 +52,8 @@ const todosView = mountTodoView({
 let pinned = false;
 let fixed = false;      // 钉住：不受其他便签挤压（v3.3.0）
 let menuOpen = false;   // 更多菜单展开态
-let editing = false;
 let confirming = false;
-let draft = "";
+let segEdit = null;     // 段就地编辑态 {bidx, ta, isNew}（null=无；v4.2.0 图片常显改造）
 let destroySent = false;
 let locked = false;     // rec.Style != nil（Go 侧 hydrate 载荷带 locked）
 let mdOn = false;       // MD 渲染：阅读态富文本（v4.1.0，hydrate 载荷带 md_render）
@@ -66,6 +64,11 @@ let slot = 0;           // 槽位：0=主便签，1~5=辅助（hydrate 载荷带
 let title = "";         // 最近一次生效标题（Go 侧规范化值）
 let titleEditing = false;
 const NS = "bugzia-notes/internal/settingsui.Service.";
+// 图片引用 token 行（独占一行整行匹配，与 Go 侧严格文件名格式同形，v4.2.0）；
+// 可选 ` =<宽>` 后缀 = Ctrl+滚轮调整的显示宽度 px（高度按比例自动）
+const PICTURE_TOKEN = /^!\[img\]\(picture\/(\d{8}-\d{6}-[a-z0-9]{4}\.(?:png|jpg|webp|gif))(?: =(\d{2,4}))?\)$/;
+// 滚轮调宽边界与步进（40~2000px，每档 ±40）
+const IMG_W_MIN = 40, IMG_W_MAX = 2000, IMG_W_STEP = 40;
 
 /* ── 注水 ─────────────────────────────────────────────────────────── */
 
@@ -105,6 +108,7 @@ wails.Events.On("note:fixed-sync", (ev) => {
 wails.Events.Emit("note:ready", { id });
 
 function applyContent(next, nextPinned, settings, nextLocked, nextFixed, nextMD, todoCats) {
+  commitSegEdit(); // 段编辑中收到重推：先提交草稿（parse 旧 content，段下标才对）
   content = next ?? "";
   pinned = !!nextPinned;
   fixed = !!nextFixed;
@@ -117,9 +121,7 @@ function applyContent(next, nextPinned, settings, nextLocked, nextFixed, nextMD,
   refreshFixBtn();
   if (slot === 0) {
     // 主便签 = 待办列表（v4.0.0）：分区条目视图；销毁项隐藏（不可销毁）
-    editing = false;
     textEl.hidden = true;
-    ta.hidden = true;
     btnDestroy.hidden = true;
     todosView.show();
     todosView.render(content, cats);
@@ -128,10 +130,7 @@ function applyContent(next, nextPinned, settings, nextLocked, nextFixed, nextMD,
     btnDestroy.hidden = false;
     todosView.hide();
     render();
-    if (content === "" && !editing) {
-      startEdit();
-      focusEditor("start");
-    }
+    if (content === "" && !segEdit) appendSegEditor(); // 空便签自动进编辑（原全局编辑行为）
   }
   if (panelOpen) { syncLockUI(); syncMDUI(); } // 面板开着时跟随重推刷新（锁关=全局被改）
 }
@@ -149,7 +148,7 @@ titleEl.addEventListener("dblclick", () => startTitleEdit());
 
 function startTitleEdit() {
   if (titleEditing || confirming) return;
-  commitEdit(); // 正文编辑先提交
+  commitSegEdit(); // 正文段编辑先提交
   titleEditing = true;
   titleEl.hidden = true;
   titleInput.hidden = false;
@@ -217,54 +216,223 @@ function applyStyle(s) {
   }
 }
 
+/* content ↔ 块模型（v4.2.0 图片常显改造）：文本块（可含内部换行）与图片块
+   按行切分，token 独占一行才成图片块；joinBlocks 与 parseBlocks 互逆
+   （每行恰属一个块，重建逐字还原，未编辑的内容零扰动）。 */
+function parseBlocks(c) {
+  const blocks = [];
+  let lines = [];
+  for (const line of String(c).split("\n")) {
+    const m = PICTURE_TOKEN.exec(line.trim());
+    if (m) {
+      if (lines.length) {
+        blocks.push({ t: "text", text: lines.join("\n") });
+        lines = [];
+      }
+      blocks.push({ t: "img", name: m[1], w: m[2] ? parseInt(m[2], 10) : 0 });
+    } else {
+      lines.push(line);
+    }
+  }
+  if (lines.length) blocks.push({ t: "text", text: lines.join("\n") });
+  return blocks;
+}
+
+function joinBlocks(blocks) {
+  return blocks
+    .map((b) =>
+      b.t === "img"
+        ? "![img](picture/" + b.name + (b.w ? " =" + b.w : "") + ")"
+        : b.text
+    )
+    .join("\n");
+}
+
 function render() {
-  if (editing) return;
+  if (segEdit) return; // 段编辑中不重绘（commit/cancel 后自然重绘）
   textEl.classList.toggle("md", mdOn);
-  if (mdOn) textEl.innerHTML = mdRender(content);
-  else textEl.textContent = content;
+  textEl.textContent = "";
+  parseBlocks(content).forEach((b, bidx) => {
+    if (b.t === "img") {
+      textEl.appendChild(imgBlockEl(b, bidx));
+    } else if (b.text.trim() !== "") {
+      textEl.appendChild(textBlockEl(b, bidx));
+    }
+  });
 }
 
-/* ── 编辑态 ───────────────────────────────────────────────────────── */
-
-function startEdit() {
-  editing = true;
-  draft = content;
-  // swap 瞬间 ta 尚未撑开（只有 min-height:100%），body 可滚动内容瞬时缩水，
-  // scrollTop 会被钳制丢失；须在 swap 前捕获、sync 后恢复（sync 内部的防护
-  // 只能覆盖它自己 auto 测量期间的坍缩，救不了 swap 这一步）
-  const keep = bodyEl.scrollTop;
-  textEl.hidden = true;
-  ta.hidden = false;
-  ta.value = draft;
-  syncTextareaHeight();
-  bodyEl.scrollTop = keep;
+/* 文本块：plain 模式 textContent（pre-wrap 继承，视觉不变）；md 模式整块
+   走 mdRender 包进包装 div（点击块内 → 就地编辑该块 MD 源码）。 */
+function textBlockEl(b, bidx) {
+  const box = document.createElement("div");
+  box.dataset.bidx = String(bidx);
+  if (mdOn) {
+    box.innerHTML = mdRender(b.text);
+  } else {
+    box.textContent = b.text;
+  }
+  return box;
 }
 
-function exitEdit() {
-  editing = false;
-  // 同 startEdit：切回阅读态瞬间 body 内容缩到一屏，scrollTop 会丢
-  const keep = bodyEl.scrollTop;
-  ta.hidden = true;
-  textEl.hidden = false;
-  render();
-  bodyEl.scrollTop = keep;
+/* 图片块包装：缩略图（点击默认查看器打开，悬停 Ctrl+滚轮调宽）+ 悬停删除
+   按钮（token 行不可见后的唯一删除入口）。加载失败（文件被 GC/损坏）就地
+   替换占位文本行。宽度持久化 400ms 防抖写回 content（SetContent 只落盘不
+   重推，滚动过程中 DOM 稳定）。 */
+function imgBlockEl(b, bidx) {
+  const wrap = document.createElement("div");
+  wrap.className = "note-imgwrap";
+  wrap.dataset.bidx = String(bidx);
+  const img = document.createElement("img");
+  img.className = "note-img";
+  img.src = "/picture/" + encodeURIComponent(b.name);
+  img.alt = "图片 " + b.name;
+  if (b.w) img.style.width = b.w + "px";
+  img.addEventListener("click", (e) => {
+    e.stopPropagation(); // 防冒泡进 bodyEl 的点击分派
+    wails.Events.Emit("note:openimage", { id, name: b.name });
+  });
+  img.addEventListener("error", () => {
+    const miss = document.createElement("div");
+    miss.className = "note-img-missing";
+    miss.textContent = "[图片缺失 " + b.name + "]";
+    img.replaceWith(miss);
+  });
+  /* 悬停 Ctrl+滚轮调宽：上滚放大/下滚缩小；基宽取当前 token 宽（未指定时
+     取实际显示宽）。监听须非 passive 才能 preventDefault——拦掉 WebView2
+     的 Ctrl+滚轮页面缩放。 */
+  let curW = b.w || 0;
+  let saveTimer = null;
+  wrap.addEventListener("wheel", (e) => {
+    if (!e.ctrlKey) return; // 无 Ctrl：放行便签内正常滚动
+    e.preventDefault();
+    const dir = e.deltaY > 0 ? -1 : 1;
+    const base = curW || Math.round(img.getBoundingClientRect().width) || 240;
+    curW = Math.min(IMG_W_MAX, Math.max(IMG_W_MIN, base + dir * IMG_W_STEP));
+    img.style.width = curW + "px";
+    clearTimeout(saveTimer);
+    const bidxNow = Number(wrap.dataset.bidx);
+    saveTimer = setTimeout(() => commitPictureWidth(bidxNow, curW), 400);
+  }, { passive: false });
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "note-img-del";
+  del.title = "删除图片";
+  del.innerHTML =
+    '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="' +
+    CLOSE_PATH +
+    '" fill="currentColor"/></svg>';
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    clearTimeout(saveTimer);
+    removeBlock(Number(wrap.dataset.bidx));
+  });
+  wrap.append(img, del);
+  return wrap;
 }
 
-function commitEdit() {
-  if (!editing) return;
-  const next = ta.value;
-  exitEdit();
+/* 滚轮调宽的持久化：重新解析 content 改图片块宽度后走 note:changed。
+   不调 render（元素尺寸已即时生效，重绘反而打断连续滚动）。 */
+function commitPictureWidth(bidx, w) {
+  const blocks = parseBlocks(content);
+  const b = blocks[bidx];
+  if (!b || b.t !== "img") return;
+  const nextW = w >= IMG_W_MIN && w <= IMG_W_MAX ? w : 0;
+  if ((b.w || 0) === nextW) return;
+  b.w = nextW;
+  const next = joinBlocks(blocks);
+  if (next === content) return;
+  content = next;
+  wails.Events.Emit("note:changed", { id, content });
+}
+
+/* Material Icons close（fonts.google.com/icons，Apache-2.0） */
+const CLOSE_PATH =
+  "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z";
+
+/* ── 段就地编辑（v4.2.0 图片常显改造）────────────────────────────────
+   无全局编辑态：文本块点击后块内弹 textarea（复用待办视图的既有模式，避开
+   contenteditable 的 IME 风险），图片块恒为 <img>。Enter 提交并收起（同旧
+   全局编辑肌肉记忆）、Shift+Enter 换行、Esc 还原该段、失焦提交。空白处点击
+   = 末尾追加新段（空便签自动进编辑，由 applyContent 驱动）。 */
+
+function startSegEdit(bidx, caret) {
+  if (segEdit) commitSegEdit();
+  if (slot === 0 || confirming) return;
+  const blocks = parseBlocks(content);
+  const b = blocks[bidx];
+  if (b && b.t !== "text") return;
+  const isNew = !b; // bidx === blocks.length：末尾追加的新空段
+  const t = document.createElement("textarea");
+  t.className = "note-segta";
+  t.rows = 1;
+  t.spellcheck = false;
+  segEdit = { bidx, ta: t, isNew };
+  const host = textEl.querySelector('[data-bidx="' + bidx + '"]');
+  if (host) {
+    host.textContent = "";
+    host.appendChild(t);
+  } else {
+    textEl.appendChild(t); // 新段没有宿主块，直接挂 textEl 末尾
+  }
+  t.value = isNew ? "" : b.text;
+  bindSegTa(t);
+  syncTaHeight(t);
+  t.focus({ preventScroll: true });
+  const pos = Math.max(0, Math.min(caret ?? t.value.length, t.value.length));
+  t.setSelectionRange(pos, pos);
+  if (isNew) scrollBodyToBottom();
+}
+
+function commitSegEdit() {
+  if (!segEdit) return;
+  const ed = segEdit;
+  segEdit = null; // 先清（防 remove 触发 blur 重入，同 note-todo）
+  const val = ed.ta.value;
+  ed.ta.remove();
+  const blocks = parseBlocks(content);
+  if (val.trim() === "") {
+    if (!ed.isNew) blocks.splice(ed.bidx, 1); // 既有段清空 = 删段
+    // 新段空提交不产生块
+  } else if (ed.isNew) {
+    blocks.push({ t: "text", text: val });
+  } else {
+    blocks[ed.bidx] = { t: "text", text: val };
+  }
+  const next = joinBlocks(blocks);
   if (next !== content) {
     content = next;
-    render();
     wails.Events.Emit("note:changed", { id, content });
   }
+  render();
 }
 
-function cancelEdit() {
-  if (!editing) return;
-  exitEdit();
+function cancelSegEdit() {
+  if (!segEdit) return;
+  const t = segEdit.ta;
+  segEdit = null;
+  t.remove();
   render();
+}
+
+function removeBlock(bidx) {
+  const blocks = parseBlocks(content);
+  if (!blocks[bidx] || blocks[bidx].t !== "img") return;
+  blocks.splice(bidx, 1);
+  const next = joinBlocks(blocks);
+  if (next === content) return;
+  content = next;
+  render();
+  wails.Events.Emit("note:changed", { id, content });
+}
+
+function appendSegEditor() {
+  const blocks = parseBlocks(content);
+  let bidx = blocks.length;
+  const last = blocks[blocks.length - 1];
+  if (last && last.t === "text" && last.text.trim() === "") {
+    bidx = blocks.length - 1; // 末块整段空白（含全空便签的唯一空块）→ 直接编辑它
+  }
+  startSegEdit(bidx, null);
 }
 
 bodyEl.addEventListener("click", (e) => {
@@ -273,27 +441,41 @@ bodyEl.addEventListener("click", (e) => {
     return;
   }
   if (slot === 0) return; // 待办视图点击语义在 note-todo.js（v4.0.0）
+  if (segEdit && segEdit.ta.contains(e.target)) return; // 编辑器内正常移动光标
   const link = e.target.closest && e.target.closest("a");
-  if (link && mdOn && !editing && !confirming) {
+  if (link && mdOn && !segEdit && !confirming) {
     e.preventDefault(); // 便签窗口不导航，转发系统浏览器打开（v4.1.0）
     wails.Events.Emit("note:openlink", { id, url: link.getAttribute("href") });
     return;
   }
-  if (!editing && !confirming) {
-    const pos = mdOn ? null : caretIndexAtClick(e); // 富文本 DOM 与源码无下标映射，回退文末
-    startEdit();
-    focusEditorAt(pos);
+  if (confirming) return;
+  // 图片/删除按钮自带 stopPropagation 不会到这；点段 = 编辑该段，
+  // 点空白 = 末尾追加。段编辑提交会同步重绘 DOM，click 命中可能落到
+  // bodyEl——用坐标找回命中的块（elementFromPoint）。
+  const blockEl = blockAtClick(e);
+  if (blockEl) {
+    const bidx = parseInt(blockEl.dataset.bidx, 10);
+    const blocks = parseBlocks(content);
+    if (blocks[bidx] && blocks[bidx].t === "text") {
+      startSegEdit(bidx, caretOffsetInBlock(e, blockEl));
+    }
+    return;
   }
+  if (!segEdit) appendSegEditor();
 });
 
-/* 阅读态点击进编辑态时光标跟随点击位置：趁 #text 还可见，用命中测试算出
-   点击处对应的字符下标（#text 只有一个文本节点，与 textarea.value 同源，
-   下标一一对应），切态后按该下标定位光标；点击落在文本区外（底部留白、
-   空便签）则回退到文末的既有行为。 */
-function caretIndexAtClick(e) {
-  if (content === "" || !textEl.firstChild) return null;
-  // #text 继承 .note-root 的 user-select:none，会让命中测试取不到文本
-  // 位置，测算期间临时打开再还原
+function blockAtClick(e) {
+  const direct = e.target.closest ? e.target.closest("[data-bidx]") : null;
+  if (direct) return direct;
+  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  return hit && hit.closest ? hit.closest("[data-bidx]") : null;
+}
+
+/* 点击文本块进编辑时光标跟随点击位置：命中测试取段内文本偏移（plain 段
+   textContent 与源文本一一对应）；md 段 DOM 与源码无下标映射 → null
+   （光标落段末，同 v4.1.0 行为）。#text 继承的 user-select:none 会让命中
+   测试取不到位置，测算期间临时打开再还原（旧 caretIndexAtClick 同款）。 */
+function caretOffsetInBlock(e, blockEl) {
   textEl.style.userSelect = "text";
   let node = null;
   let offset = 0;
@@ -311,65 +493,118 @@ function caretIndexAtClick(e) {
     }
   }
   textEl.style.userSelect = "";
-  return node === textEl.firstChild ? offset : null;
+  return node && node.parentNode === blockEl ? offset : null;
 }
 
-function focusEditorAt(index) {
-  if (index == null) {
-    focusEditor("end");
-    return;
+function bindSegTa(t) {
+  t.addEventListener("input", () => syncTaHeightKeepEnd(t));
+  t.addEventListener("blur", () => commitSegEdit());
+  t.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      commitSegEdit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelSegEdit();
+    }
+  });
+  t.addEventListener("paste", (e) => onSegPaste(e, t));
+}
+
+/* 粘贴图片（v4.2.0，仅辅助/自由便签）：clipboardData 含 image/* 时拦截，
+   转 base64 交 Go 落盘 picture 目录；段编辑器内 → 光标处插 token，阅读态
+   （document 级）→ 末尾追加图片块。无图片不拦截（放行默认文本粘贴）。 */
+const PASTE_EXT = {
+  "image/png": "png", "image/jpeg": "jpg",
+  "image/webp": "webp", "image/gif": "gif",
+};
+
+function clipboardImage(e) {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return null;
+  for (const it of items) {
+    if (PASTE_EXT[it.type]) {
+      const f = it.getAsFile();
+      if (f) return { file: f, ext: PASTE_EXT[it.type] };
+    }
   }
-  // preventScroll 禁掉 focus 的自动滚动（focus 默认把光标滚入视口，未设
-  // 选区时光标在文末，视图会被猛滚到底部）
-  syncTextareaHeight();
-  ta.focus({ preventScroll: true });
-  const pos = Math.max(0, Math.min(index, ta.value.length));
-  ta.setSelectionRange(pos, pos);
+  return null;
 }
 
-function focusEditor(selection) {
-  syncTextareaHeight();
-  ta.focus();
-  const pos = selection === "start" ? 0 : ta.value.length;
-  ta.setSelectionRange(pos, pos);
-  if (selection === "end") scrollBodyToBottom();
+function savePictureFile(img, cb) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const b64 = String(reader.result || "").split(",")[1] || "";
+    wails.Call.ByName(NS + "SavePicture", img.ext, b64)
+      .then((name) => {
+        if (name) cb(String(name));
+      })
+      .catch((err) => console.error("[image] 保存失败:", err));
+  };
+  reader.onerror = () => console.error("[image] 读取剪贴板图片失败");
+  reader.readAsDataURL(img.file);
 }
 
-ta.addEventListener("input", () => {
-  draft = ta.value;
-  syncTextareaHeightAndKeepEndVisible();
+function onSegPaste(e, t) {
+  if (slot === 0) return;
+  const img = clipboardImage(e);
+  if (!img) return;
+  e.preventDefault();
+  savePictureFile(img, (name) => {
+    // 粘贴等待期间该编辑器已被提交/取消 → 转为末尾追加（不丢图）
+    if (segEdit && segEdit.ta === t) insertTokenInTa(t, name);
+    else appendImageBlock(name);
+  });
+}
+
+document.addEventListener("paste", (e) => {
+  if (slot === 0 || segEdit || confirming) return;
+  const img = clipboardImage(e);
+  if (!img) return;
+  e.preventDefault();
+  savePictureFile(img, (name) => appendImageBlock(name));
 });
 
-ta.addEventListener("blur", () => commitEdit());
+function insertTokenInTa(t, name) {
+  const token = "![img](picture/" + name + ")";
+  const pos = t.selectionStart ?? t.value.length;
+  const end = t.selectionEnd ?? pos;
+  const before = t.value.slice(0, pos);
+  const after = t.value.slice(end);
+  const pre = before !== "" && !before.endsWith("\n") ? "\n" : "";
+  const next = before + pre + token + "\n" + after;
+  t.value = next;
+  const caret = (before + pre + token + "\n").length;
+  t.setSelectionRange(caret, caret);
+  syncTaHeight(t);
+}
 
-ta.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-    e.preventDefault();
-    commitEdit();
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    cancelEdit();
-  }
-});
+function appendImageBlock(name) {
+  const blocks = parseBlocks(content);
+  blocks.push({ t: "img", name });
+  const next = joinBlocks(blocks);
+  if (next === content) return;
+  content = next;
+  render();
+  scrollBodyToBottom();
+  wails.Events.Emit("note:changed", { id, content });
+}
 
-/* 高度自适应 + 保持末行可见（bugzia 同款简化：caret 在末尾或已贴底才滚动） */
-function syncTextareaHeight() {
-  // height="auto" 的测量瞬间 ta 塌回 min-height（约一屏），body 可滚动内容
-  // 瞬时缩水，scrollTop 会被钳制丢失；先记后还
+/* 高度自适应（三轮收敛，同 note-todo syncTaHeight）+ 保持末行可见
+   （caret 在末尾或已贴底才滚动，bugzia 同款简化） */
+function syncTaHeight(t) {
+  // height="auto" 的测量瞬间 body 可滚动内容瞬时缩水，scrollTop 会被钳制
+  // 丢失；先记后还
   const keep = bodyEl.scrollTop;
-  ta.style.height = "auto";
-  // 首轮测量发生在 body 无滚动条的布局下（ta 只有 min-height，撑不出滚动条），
-  // 换行宽度比最终态宽，测得高度偏小；赋高后内容超屏、滚动条出现、宽度收窄，
-  // 实际所需高度变大，超出部分被 ta 的 overflow:hidden 裁掉且 body 滚不到
-  // （末行被吞）。滚动条只有出现/消失两个状态，赋高后再测再赋，两轮内必收敛。
-  let h = ta.scrollHeight;
+  t.style.height = "auto";
+  let h = t.scrollHeight;
   for (let i = 0; i < 3; i++) {
-    ta.style.height = h + "px";
-    const again = ta.scrollHeight;
+    t.style.height = h + "px";
+    const again = t.scrollHeight;
     if (again === h) break;
     h = again;
   }
-  ta.style.height = h + "px";
+  t.style.height = h + "px";
   bodyEl.scrollTop = keep;
 }
 
@@ -377,21 +612,15 @@ function isBodyScrolledToBottom() {
   return bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight <= 4;
 }
 
-function isCaretAtEnd() {
-  return ta.selectionStart === ta.value.length && ta.selectionEnd === ta.value.length;
-}
-
-function shouldKeepEndVisible() {
-  return isCaretAtEnd() || isBodyScrolledToBottom();
-}
-
 function scrollBodyToBottom() {
   bodyEl.scrollTop = bodyEl.scrollHeight;
 }
 
-function syncTextareaHeightAndKeepEndVisible() {
-  const keep = shouldKeepEndVisible();
-  syncTextareaHeight();
+function syncTaHeightKeepEnd(t) {
+  const keep =
+    (t.selectionStart === t.value.length && t.selectionEnd === t.value.length) ||
+    isBodyScrolledToBottom();
+  syncTaHeight(t);
   if (keep) scrollBodyToBottom();
 }
 
@@ -405,7 +634,7 @@ const LOCK_OPEN_PATH =
 
 function openPanel() {
   if (confirming) return; // 销毁确认态时「设置」不响应
-  commitEdit();           // 编辑态先提交草稿
+  commitSegEdit();        // 段编辑中先提交草稿
   panelOpen = true;
   stylepanelEl.hidden = false;
   catspanelEl.hidden = slot !== 0; // 分类管理仅主便签（v4.0.0）
@@ -561,7 +790,8 @@ btnFix.addEventListener("click", () => {
 
 btnCopy.addEventListener("click", async () => {
   try {
-    await navigator.clipboard.writeText(editing ? ta.value : content);
+    // 段编辑器打开时先失焦提交（blur 先于 click），content 即最新值
+    await navigator.clipboard.writeText(content);
     btnCopy.textContent = "已复制";
     setTimeout(() => {
       btnCopy.textContent = "复制";
@@ -587,7 +817,7 @@ function refreshFixBtn() {
 
 /* 销毁确认：先提交草稿，再弹浮层（bugzia 同款） */
 function requestDestroy() {
-  commitEdit();
+  commitSegEdit();
   closePanel();
   closeMenu();
   if (confirming) return;
